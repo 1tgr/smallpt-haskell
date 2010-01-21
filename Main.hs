@@ -82,7 +82,6 @@ toInt x = truncate ((((clamp x) ** (1 / 2.2)) * 255) + 0.5)
 
 intersectScene :: (Floating a, Ord a) => Ray a -> Maybe (Sphere a, a)
 intersectScene r = listToMaybe
-                 $ reverse
                  $ sortBy (comparing snd)
                  $ [(s, t) | s <- spheres, let t = intersectSphere s r, t /= 0]
 
@@ -154,25 +153,25 @@ main' w h samp = let floatsamp = fromInteger (toInteger samp) :: Floating f => f
                      camdir = norm (Vec 0 (-0.042612) (-1))
                      cx = Vec (w * 0.5135 / h) 0 0
                      cy = (norm (cx `cross` camdir)) |*| 0.5135
-                     zz x y = let zzz sx sy = let zzzz = do r1 <- (2 *) <$> State random
-                                                            r2 <- (2 *) <$> State random
-                                                            let dx | r1 < 1 = (sqrt r1) - 1
-                                                                   | otherwise = 1 - (sqrt (2 - r1))
-                                                                dy | r2 < 1 = (sqrt r2) - 1
-                                                                   | otherwise = 1 - (sqrt (2-r2))
-                                                                d = (cx |*| ( ( (sx + 0.5 + dx)/2 + x)/w - 0.5)) |+|
-                                                                    (cy |*| ( ( (sy + 0.5 + dy)/2 + y)/h - 0.5)) |+| camdir
-                                                                ray = Ray (campos |+| (d |*| 140.0)) (norm d)
-                                                            (|*| (1.0 / floatsamp)) <$> radiance ray 0
-                                              in do Vec rx ry rz <- foldl1 (|+|) <$> sequence (genericReplicate samp zzzz)
-                                                    return (Vec (clamp rx) (clamp ry) (clamp rz) |*| 0.25)
-                              in foldl1 (|+|) <$> sequence [zzz sx sy | sy <- [0..1], sx <- [0..1]]
-                 in sequence [zz x y | y <- [0..(h-1)], x <- trace ("y = " ++ (show y)) [0..(w-1)]]
+                     pixel x y = let subpixel sx sy = let sample = do r1 <- (2 *) <$> State random
+                                                                      r2 <- (2 *) <$> State random
+                                                                      let dx | r1 < 1 = (sqrt r1) - 1
+                                                                             | otherwise = 1 - (sqrt (2 - r1))
+                                                                          dy | r2 < 1 = (sqrt r2) - 1
+                                                                             | otherwise = 1 - (sqrt (2-r2))
+                                                                          d = (cx |*| (((sx + 0.5 + dx)/2 + x)/w - 0.5)) |+|
+                                                                              (cy |*| (((sy + 0.5 + dy)/2 + y)/h - 0.5)) |+| camdir
+                                                                          ray = Ray (campos |+| (d |*| 140.0)) (norm d)
+                                                                      (|*| (1.0 / floatsamp)) <$> radiance ray 0
+                                                      in do Vec rx ry rz <- foldl1 (|+|) <$> sequence (replicate samp sample)
+                                                            return (Vec (clamp rx) (clamp ry) (clamp rz) |*| 0.25)
+                                 in foldl1 (|+|) <$> sequence [subpixel sx sy | sy <- [0, 1], sx <- [0, 1]]
+                 in sequence [pixel x (h-1-y) | y <- [0..(h-1)], x <- trace ("y = " ++ (show y)) [0..(w-1)]]
 
 main :: IO ()
 main = do let w = 320
               h = 240
-              c = evalState (main' w h 8) (mkStdGen 0) :: [Vec Float]
+              c = evalState (main' w h 200) (mkStdGen 0) :: [Vec Float]
           putStrLn ("P3\n" ++ (show w) ++ " " ++ (show h) ++ "\n255\n")
           let printPixel (Vec r g b) = putStr ((show (toInt r :: Int)) ++ " " ++ (show (toInt g :: Int)) ++ " " ++ (show (toInt b :: Int)) ++ " ")
           mapM_ printPixel c
