@@ -8,4 +8,4 @@ clean:
 	rm -r bin obj
 
 test: build
-	bin/global-illum
+	bin/global-illum > bin/global-illum.ppm

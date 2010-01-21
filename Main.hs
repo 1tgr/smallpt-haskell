@@ -77,8 +77,8 @@ clamp x | x < 0 = 0
         | x > 1 = 1
         | otherwise = x
 
-toInt :: (Floating a, Ord a) => a -> a
-toInt x = ((((clamp x) ** (1 / 2.2)) * 255) + 0.5)
+toInt :: (Floating a, Ord a, RealFrac a, Integral b) => a -> b
+toInt x = truncate ((((clamp x) ** (1 / 2.2)) * 255) + 0.5)
 
 intersectScene :: (Floating a, Ord a) => Ray a -> Maybe (Sphere a, a)
 intersectScene r = listToMaybe
@@ -86,33 +86,93 @@ intersectScene r = listToMaybe
                  $ sortBy (comparing snd)
                  $ [(s, t) | s <- spheres, let t = intersectSphere s r, t /= 0]
 
-radiance :: Ray a -> Int -> Vec a
-radiance = undefined
+radiance :: (Floating a, Ord a, Random a, RandomGen g) => Ray a -> Int -> State g (Vec a)
+radiance r depth = case intersectScene r of
+                     Nothing -> return (Vec 0 0 0)
+                     Just (obj, t) -> radiance' obj t
+  where radiance' obj t = do let Ray rayo rayd = r
+                                 x = rayo |+| (rayd |*| t)
+                                 n = norm (x |-| (position obj))
+                                 nl | (n `dot` rayd) < 0 = n
+                                    | otherwise = n |*| (-1)
+                                 Vec fx fy fz = colour obj
+                                 p | fx > fy && fx > fz = fx
+                                   | fy > fz = fy
+                                   | otherwise = fz -- max refl
+                             p' <- if depth >= 5
+                                     then return p
+                                     else State random
+                             if p' >= p
+                               then return (emission obj) --R.R.
+                               else let f = (colour obj) |*| (1.0 / p)
+                                    in case refl obj of 
+                                      DIFF -> -- Ideal DIFFUSE reflection
+                                              do r1 <- (2 * pi *) <$> State random
+                                                 r2 <- State random
+                                                 let r2s = sqrt r2
+                                                     Vec wx _ _ = nl
+                                                     u | (abs wx) > 0.1 = Vec 0 1 0
+                                                       | otherwise = norm ((Vec 1 0 0) `cross` nl)
+                                                     v = nl `cross` u
+                                                     d = norm ((u |*| (cos r1) |*| r2s) |+| (v |*| (sin r1) |*| r2s) |+| (nl |*| (sqrt (1 - r2))))
+                                                 ((emission obj) |+|) . (f `vmult`) <$> radiance (Ray x d) (depth + 1)
+                                      SPEC -> -- Ideal SPECULAR reflection
+                                              ((emission obj) |+|) . (f `vmult`) <$> radiance (Ray x (rayd |-| (n |*| (2 * (n `dot` rayd))))) (depth + 1)
+                                      REFR -> -- Ideal dielectric REFRACTION
+                                              let reflRay = Ray x (rayd |-| (n |*| (2 * (n `dot` rayd))))
+                                                  into = (n `dot` nl) > 0                -- Ray from outside going in?
+                                                  nc = 1
+                                                  nt = 1.5
+                                                  nnt | into = nc / nt
+                                                      | otherwise = nt / nc
+                                                  ddn = rayd `dot` nl
+                                                  cos2t = 1 - nnt * nnt * (1 - ddn * ddn)
+                                              in if cos2t < 0    -- Total internal reflection
+                                                   then ((emission obj) |+|) . (f `vmult`) <$> radiance reflRay (depth + 1)
+                                                   else let tdir = norm ((rayd |*| nnt) |-| (n |*| ((if into then 1 else (-1)) * (ddn * nnt + (sqrt cos2t)))))
+                                                            a = nt - nc
+                                                            b = nt + nc
+                                                            r0 = a * a / (b * b)
+                                                            c = 1 - (if into then (-ddn) else tdir `dot` n)
+                                                            re = r0 + (1 - r0) * c * c * c * c * c
+                                                            tr = 1 - re
+                                                            pp = 0.25 + 0.5 * re
+                                                            rp = re / p
+                                                            tp = tr / (1 - p)
+                                                            r' | depth >= 2 = do pp' <- State random
+                                                                                 if pp' < pp
+                                                                                   then (|*| rp) <$> radiance reflRay (depth + 1)
+                                                                                   else (|*| tp) <$> radiance (Ray x tdir) (depth + 1)
+                                                               | otherwise = do re' <- (|*| re) <$> radiance reflRay (depth + 1)
+                                                                                tr' <- (|*| tr) <$> radiance (Ray x tdir) (depth + 1)
+                                                                                return (re' |+| tr')
+                                                        in ((emission obj) |+|) . (f `vmult`) <$> r'
 
-main' :: (Enum a, Floating a, Ord a, Random a, Read a, RandomGen g) => Int -> State g [Vec a]
-main' samp = let w = 1024
-                 h = 768
-                 floatsamp = fromInteger (toInteger samp) :: Floating f => f
-                 campos = Vec 50 52 295.6
-                 camdir = norm (Vec 0 (-0.042612) (-1))
-                 cx = Vec (w*0.5135/h) 0 0
-                 cy = (norm (cx `cross` camdir)) |*| 0.5135
-                 zz x y = let zzz sx sy = let zzzz = do r1 <- (2 *) <$> State random
-                                                        r2 <- (2 *) <$> State random
-                                                        let dx | r1 < 1 = (sqrt r1) - 1
-                                                               | otherwise = 1 - (sqrt (2 - r1))
-                                                            dy | r2 < 1 = (sqrt r2) - 1
-                                                               | otherwise = 1 - (sqrt (2-r2))
-                                                            d = (cx |*| ( ( (sx + 0.5 + dx)/2 + x)/w - 0.5)) |+|
-                                                                (cy |*| ( ( (sy + 0.5 + dy)/2 + y)/h - 0.5)) |+| camdir
-                                                            ray = Ray (campos |+| (d |*| 140.0)) (norm d)
-                                                        return ((radiance ray 0) |*| (1.0 / floatsamp))
-                                          in do Vec rx ry rz <- foldl1 (|+|) <$> sequence (genericReplicate samp zzzz)
-                                                return (Vec (clamp rx) (clamp ry) (clamp rz) |*| 0.25)
-                          in foldl1 (|+|) <$> sequence [zzz sx sy | sy <- [0..1], sx <- [0..1]]
-             in sequence [zz x y | y <- [0..(h-1)], x <- trace ("y = " ++ (show y)) [0..(w-1)]]
+main' :: (Enum a, Floating a, Ord a, Random a, Read a, RandomGen g) => a -> a -> Int -> State g [Vec a]
+main' w h samp = let floatsamp = fromInteger (toInteger samp) :: Floating f => f
+                     campos = Vec 50 52 295.6
+                     camdir = norm (Vec 0 (-0.042612) (-1))
+                     cx = Vec (w * 0.5135 / h) 0 0
+                     cy = (norm (cx `cross` camdir)) |*| 0.5135
+                     zz x y = let zzz sx sy = let zzzz = do r1 <- (2 *) <$> State random
+                                                            r2 <- (2 *) <$> State random
+                                                            let dx | r1 < 1 = (sqrt r1) - 1
+                                                                   | otherwise = 1 - (sqrt (2 - r1))
+                                                                dy | r2 < 1 = (sqrt r2) - 1
+                                                                   | otherwise = 1 - (sqrt (2-r2))
+                                                                d = (cx |*| ( ( (sx + 0.5 + dx)/2 + x)/w - 0.5)) |+|
+                                                                    (cy |*| ( ( (sy + 0.5 + dy)/2 + y)/h - 0.5)) |+| camdir
+                                                                ray = Ray (campos |+| (d |*| 140.0)) (norm d)
+                                                            (|*| (1.0 / floatsamp)) <$> radiance ray 0
+                                              in do Vec rx ry rz <- foldl1 (|+|) <$> sequence (genericReplicate samp zzzz)
+                                                    return (Vec (clamp rx) (clamp ry) (clamp rz) |*| 0.25)
+                              in foldl1 (|+|) <$> sequence [zzz sx sy | sy <- [0..1], sx <- [0..1]]
+                 in sequence [zz x y | y <- [0..(h-1)], x <- trace ("y = " ++ (show y)) [0..(w-1)]]
 
 main :: IO ()
-main = do let c :: [Vec Float]
-              c = evalState (main' 8) (mkStdGen 0)
-          print c
+main = do let w = 320
+              h = 240
+              c = evalState (main' w h 8) (mkStdGen 0) :: [Vec Float]
+          putStrLn ("P3\n" ++ (show w) ++ " " ++ (show h) ++ "\n255\n")
+          let printPixel (Vec r g b) = putStr ((show (toInt r :: Int)) ++ " " ++ (show (toInt g :: Int)) ++ " " ++ (show (toInt b :: Int)) ++ " ")
+          mapM_ printPixel c
