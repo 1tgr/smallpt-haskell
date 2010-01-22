@@ -2,10 +2,10 @@ all: test
 
 build:
 	mkdir -p bin obj
-	ghc --make -Wall -o bin/global-illum -outputdir obj *.hs
+	ghc --make -Wall -threaded -o bin/global-illum -outputdir obj *.hs
 
 clean:
 	rm -r bin obj
 
 test: build
-	bin/global-illum > bin/global-illum.ppm
+	time bin/global-illum +RTS -N8 > bin/global-illum.ppm
