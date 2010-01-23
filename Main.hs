@@ -1,9 +1,10 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, ScopedTypeVariables #-}
 module Main where
 
 import Control.Applicative
+import Control.DeepSeq
 import Control.Monad.State
-import Control.Parallel.Strategies(parMap, rwhnf)
+import Control.Parallel.Strategies(parMap, rdeepseq)
 import Data.Ord
 import Debug.Trace
 import List
@@ -12,6 +13,9 @@ import Random
 
 data Vec a = Vec a a a
              deriving Show
+
+instance NFData a => NFData (Vec a) where
+  rnf (Vec x y z) = rnf x `seq` rnf y `seq` rnf z
 
 (|+|) :: Num a => Vec a -> Vec a -> Vec a
 (Vec x1 y1 z1) |+| (Vec x2 y2 z2) = Vec (x1 + x2) (y1 + y2) (z1 + z2)
@@ -148,33 +152,33 @@ radiance r depth = case intersectScene r of
                                                                                 return (re' |+| tr')
                                                         in ((emission obj) |+|) . (f `vmult`) <$> r'
 
-main' :: (Enum a, Floating a, Ord a, Random a) => Int -> Int -> Int -> [[Vec a]]
-main' w h samp = parMap rwhnf (line . (h -)) [1..h]
-                 where floatw = fromInteger (toInteger w) :: Floating f => f
-                       floath = fromInteger (toInteger h) :: Floating f => f
-                       floatsamp = fromInteger (toInteger samp) :: Floating f => f
+main' :: forall a. (Enum a, Floating a, NFData a, Ord a, Random a) => Int -> Int -> Int -> [[Vec a]]
+main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
+                 where one_over_w = 1.0 / (fromIntegral w) :: a
+                       one_over_h = 1.0 / (fromIntegral h) :: a
+                       one_over_samp = 1.0 / (fromIntegral samp) ::a
                        campos = Vec 50 52 295.6
                        camdir = norm (Vec 0 (-0.042612) (-1))
-                       cx = Vec (floatw * 0.5135 / floath) 0 0
+                       cx = Vec (0.5135 * one_over_h / one_over_w) 0 0
                        cy = (norm (cx `cross` camdir)) |*| 0.5135
-                       line y = let m = sequence (map (pixel . subtract 1) [1..w])
+                       line y = let m = sequence (map ((flip pixel y) . subtract 1) [1..w])
                                     g = mkStdGen (y * y * y)
-                                in evalState m (trace ("Line " ++ (show y)) g)
-                                where floaty = fromInteger (toInteger y) :: Floating f => f
-                                      pixel x = foldl1 (|+|) <$> sequence [subpixel sx sy | sy <- [0, 1], sx <- [0, 1]]
-                                                where floatx = fromInteger (toInteger x) :: Floating f => f
-                                                      subpixel sx sy = do Vec rx ry rz <- foldl1 (|+|) <$> sequence (replicate samp sample)
-                                                                          return (Vec (clamp rx) (clamp ry) (clamp rz) |*| 0.25)
-                                                                       where sample = do r1 <- (2 *) <$> State random
-                                                                                         r2 <- (2 *) <$> State random
-                                                                                         let dx | r1 < 1 = (sqrt r1) - 1
-                                                                                                | otherwise = 1 - (sqrt (2 - r1))
-                                                                                             dy | r2 < 1 = (sqrt r2) - 1
-                                                                                                | otherwise = 1 - (sqrt (2-r2))
-                                                                                             d = (cx |*| (((sx + 0.5 + dx)/2 + floatx)/floatw - 0.5)) |+|
-                                                                                                 (cy |*| (((sy + 0.5 + dy)/2 + floaty)/floath - 0.5)) |+| camdir
-                                                                                             ray = Ray (campos |+| (d |*| 140.0)) (norm d)
-                                                                                         (|*| (1.0 / floatsamp)) <$> radiance ray 0
+                                in evalState (trace ("Line " ++ (show y)) m) g
+                       pixel x y = foldl1 (|+|) <$> sequence [subpixel x y sx sy | sy <- [0, 1], sx <- [0, 1]]
+                       subpixel x y sx sy = do Vec rx ry rz <- foldl1 (|+|) <$> sequence (replicate samp (sample x y sx sy))
+                                               return (Vec (clamp rx) (clamp ry) (clamp rz) |*| 0.25)
+                       sample x y sx sy = do r1 <- (2 *) <$> State random
+                                             r2 <- (2 *) <$> State random
+                                             let dx | r1 < 1 = (sqrt r1) - 1
+                                                    | otherwise = 1 - (sqrt (2 - r1))
+                                                 dy | r2 < 1 = (sqrt r2) - 1
+                                                    | otherwise = 1 - (sqrt (2-r2))
+                                                 floatx = fromIntegral x :: a
+                                                 floaty = fromIntegral y :: a
+                                                 d = (cx |*| (((sx + 0.5 + dx)/2 + floatx) * one_over_w - 0.5)) |+|
+                                                     (cy |*| (((sy + 0.5 + dy)/2 + floaty) * one_over_h - 0.5)) |+| camdir
+                                                 ray = Ray (campos |+| (d |*| 140.0)) (norm d)
+                                             (|*| one_over_samp) <$> radiance ray 0
 
 main :: IO ()
 main = do let w = 320
