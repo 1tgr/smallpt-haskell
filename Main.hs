@@ -50,21 +50,21 @@ data Sphere a = Sphere { radius :: a,
                          colour :: Vec a,
                          refl :: Refl }
 
-intersectSphere :: (Floating a, Ord a) => Sphere a -> Ray a -> a
+intersectSphere :: (Floating a, Ord a) => Sphere a -> Ray a -> Maybe a
 intersectSphere s (Ray o d) = let op = (position s) |-| o -- Solve t^2*d.d + 2*t*(o-p).d + (o-p).(o-p)-R^2 = 0
                                   eps = 1e-4
                                   b = op `dot` d
-                                  det = b * b - (op `dot` op) + (radius s) * (radius s)
+                                  det = (b * b) - (op `dot` op) + ((radius s) * (radius s))
                               in if det < 0
-                                   then 0
+                                   then Nothing
                                    else let det' = sqrt det
                                             t = b - det'
                                         in if t > eps
-                                             then t
+                                             then Just t
                                              else let t' = b + det'
                                                   in if t' > eps
-                                                       then t'
-                                                       else 0
+                                                       then Just t'
+                                                       else Nothing
 
 spheres :: Fractional a => [Sphere a]
 spheres = [Sphere { radius = 1e5,  position = Vec (1+1e5) 40.8 81.6,    emission = Vec 0 0 0,    colour = Vec 0.75 0.25 0.25,  refl = DIFF},--Left
@@ -85,19 +85,22 @@ clamp x | x < 0 = 0
 toInt :: (Floating a, Ord a, RealFrac a, Integral b) => a -> b
 toInt x = truncate ((((clamp x) ** (1 / 2.2)) * 255) + 0.5)
 
+maybeMinimumBy :: (a -> a -> Ordering) -> [a] -> Maybe a
+maybeMinimumBy f [] = Nothing
+maybeMinimumBy f l = Just (minimumBy f l)
+
 intersectScene :: (Floating a, Ord a) => Ray a -> Maybe (Sphere a, a)
-intersectScene r = listToMaybe
-                 $ sortBy (comparing snd)
-                 $ [(s, t) | s <- spheres, let t = intersectSphere s r, t /= 0]
+intersectScene r = maybeMinimumBy (comparing snd)
+                 $ [(s, t) | (s, Just t) <- [(s, intersectSphere s r) | s <- spheres]]
 
 radiance :: (Floating a, Ord a, Random a, RandomGen g) => Ray a -> Int -> State g (Vec a)
 radiance r depth = case intersectScene r of
                      Nothing -> return (Vec 0 0 0)
                      Just (obj, t) -> radiance' obj t
-  where radiance' obj t = do let Ray rayo rayd = r
-                                 x = rayo |+| (rayd |*| t)
+  where radiance' obj t = do let Ray raypos raydir = r
+                                 x = raypos |+| (raydir |*| t)
                                  n = norm (x |-| (position obj))
-                                 nl | (n `dot` rayd) < 0 = n
+                                 nl | (n `dot` raydir) < 0 = n
                                     | otherwise = n |*| (-1)
                                  Vec fx fy fz = colour obj
                                  p | fx > fy && fx > fz = fx
@@ -115,34 +118,36 @@ radiance r depth = case intersectScene r of
                                                  r2 <- State random
                                                  let r2s = sqrt r2
                                                      Vec wx _ _ = nl
-                                                     u | (abs wx) > 0.1 = Vec 0 1 0
+                                                     u | (abs wx) > 0.1 = norm ((Vec 0 1 0) `cross` nl)
                                                        | otherwise = norm ((Vec 1 0 0) `cross` nl)
                                                      v = nl `cross` u
-                                                     d = norm ((u |*| (cos r1) |*| r2s) |+| (v |*| (sin r1) |*| r2s) |+| (nl |*| (sqrt (1 - r2))))
+                                                     d = norm ((u |*| ((cos r1) * r2s)) |+| 
+                                                               (v |*| ((sin r1) * r2s)) |+| 
+                                                               (nl |*| (sqrt (1 - r2))))
                                                  ((emission obj) |+|) . (f `vmult`) <$> radiance (Ray x d) (depth + 1)
                                       SPEC -> -- Ideal SPECULAR reflection
-                                              ((emission obj) |+|) . (f `vmult`) <$> radiance (Ray x (rayd |-| (n |*| (2 * (n `dot` rayd))))) (depth + 1)
+                                              ((emission obj) |+|) . (f `vmult`) <$> radiance (Ray x (raydir |-| (n |*| (2 * (n `dot` raydir))))) (depth + 1)
                                       REFR -> -- Ideal dielectric REFRACTION
-                                              let reflRay = Ray x (rayd |-| (n |*| (2 * (n `dot` rayd))))
+                                              let reflRay = Ray x (raydir |-| (n |*| (2 * (n `dot` raydir))))
                                                   into = (n `dot` nl) > 0                -- Ray from outside going in?
                                                   nc = 1
                                                   nt = 1.5
                                                   nnt | into = nc / nt
                                                       | otherwise = nt / nc
-                                                  ddn = rayd `dot` nl
-                                                  cos2t = 1 - nnt * nnt * (1 - ddn * ddn)
+                                                  ddn = raydir `dot` nl
+                                                  cos2t = 1 - (nnt * nnt * (1 - (ddn * ddn)))
                                               in if cos2t < 0    -- Total internal reflection
                                                    then ((emission obj) |+|) . (f `vmult`) <$> radiance reflRay (depth + 1)
-                                                   else let tdir = norm ((rayd |*| nnt) |-| (n |*| ((if into then 1 else (-1)) * (ddn * nnt + (sqrt cos2t)))))
+                                                   else let tdir = norm ((raydir |*| nnt) |-| (n |*| ((if into then 1 else (-1)) * (ddn * nnt + (sqrt cos2t)))))
                                                             a = nt - nc
                                                             b = nt + nc
                                                             r0 = a * a / (b * b)
                                                             c = 1 - (if into then (-ddn) else tdir `dot` n)
-                                                            re = r0 + (1 - r0) * c * c * c * c * c
+                                                            re = r0 + ((1 - r0) * c * c * c * c * c)
                                                             tr = 1 - re
-                                                            pp = 0.25 + 0.5 * re
+                                                            pp = 0.25 + (0.5 * re)
                                                             rp = re / p
-                                                            tp = tr / (1 - p)
+                                                            tp = tr / (1 - pp)
                                                             r' | depth >= 2 = do pp' <- State random
                                                                                  if pp' < pp
                                                                                    then (|*| rp) <$> radiance reflRay (depth + 1)
@@ -172,17 +177,17 @@ main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
                                              let dx | r1 < 1 = (sqrt r1) - 1
                                                     | otherwise = 1 - (sqrt (2 - r1))
                                                  dy | r2 < 1 = (sqrt r2) - 1
-                                                    | otherwise = 1 - (sqrt (2-r2))
+                                                    | otherwise = 1 - (sqrt (2 - r2))
                                                  floatx = fromIntegral x :: a
                                                  floaty = fromIntegral y :: a
-                                                 d = (cx |*| (((sx + 0.5 + dx)/2 + floatx) * one_over_w - 0.5)) |+|
-                                                     (cy |*| (((sy + 0.5 + dy)/2 + floaty) * one_over_h - 0.5)) |+| camdir
+                                                 d = (cx |*| (((sx + 0.5 + dx) / 2 + floatx) * one_over_w - 0.5)) |+|
+                                                     (cy |*| (((sy + 0.5 + dy) / 2 + floaty) * one_over_h - 0.5)) |+| camdir
                                                  ray = Ray (campos |+| (d |*| 140.0)) (norm d)
                                              (|*| one_over_samp) <$> radiance ray 0
 
 main :: IO ()
-main = do let w = 320
-              h = 240
+main = do let w = 1024
+              h = 768
               showPixel (Vec r g b) = (show (toInt r :: Int)) ++ " " ++ (show (toInt g :: Int)) ++ " " ++ (show (toInt b :: Int)) ++ " "
           putStrLn ("P3\n" ++ (show w) ++ " " ++ (show h) ++ "\n255\n")
-          mapM_ (putStrLn . showPixel) (concat (main' w h 8) :: [Vec Float])
+          mapM_ (putStrLn . showPixel) (concat (main' w h 1) :: [Vec Float])
