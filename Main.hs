@@ -67,12 +67,12 @@ intersectSphere (Ray o d) s = let op = position s |-| o -- Solve t^2*d.d + 2*t*(
                                                        else Nothing
 
 spheres :: Fractional a => [Sphere a]
-spheres = [{- Sphere { radius = 1e5,  position = Vec (1+1e5) 40.8 81.6,    emission = Vec 0 0 0,    colour = Vec 0.75 0.25 0.25,  refl = DIFF},--Left
+spheres = [Sphere { radius = 1e5,  position = Vec (1+1e5) 40.8 81.6,    emission = Vec 0 0 0,    colour = Vec 0.75 0.25 0.25,  refl = DIFF},--Left
            Sphere { radius = 1e5,  position = Vec (99-1e5) 40.8 81.6,   emission = Vec 0 0 0,    colour = Vec 0.25 0.25 0.75,  refl = DIFF},--Rght
            Sphere { radius = 1e5,  position = Vec 50 40.8 1e5,          emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Back
            Sphere { radius = 1e5,  position = Vec 50 40.8 (170-1e5),    emission = Vec 0 0 0,    colour = Vec 0 0 0,           refl = DIFF},--Frnt
            Sphere { radius = 1e5,  position = Vec 50 1e5 81.6,          emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Botm
-           Sphere { radius = 1e5,  position = Vec 50 (81.6-1e5) 81.6,   emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Top -}
+           Sphere { radius = 1e5,  position = Vec 50 (81.6-1e5) 81.6,   emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Top
            Sphere { radius = 16.5, position = Vec 27 16.5 47,           emission = Vec 0 0 0,    colour = Vec 1 1 1 |*| 0.999, refl = SPEC},--Mirr
            Sphere { radius = 16.5, position = Vec 73 16.5 78,           emission = Vec 0 0 0,    colour = Vec 1 1 1 |*| 0.999, refl = REFR},--Glas
            Sphere { radius = 600,  position = Vec 50 (681.6-0.27) 81.6, emission = Vec 12 12 12, colour = Vec 0 0 0,           refl = DIFF}] --Lite
@@ -107,14 +107,14 @@ radiance r depth = case intersectScene r of
                                    | otherwise = fz -- max refl
                              p' <- if depth >= 5
                                      then return p
-                                     else State random
+                                     else State (randomR (0, 1))
                              if p' >= p
                                then return (emission obj) --R.R.
                                else let f = colour obj |*| (1.0 / p)
                                     in case refl obj of 
                                       DIFF -> -- Ideal DIFFUSE reflection
-                                              do r1 <- (2 * pi *) <$> State random
-                                                 r2 <- State random
+                                              do r1 <- State (randomR (0, 2 * pi))
+                                                 r2 <- State (randomR (0, 1))
                                                  let r2s = sqrt r2
                                                      w = nl
                                                      Vec wx _ _ = w
@@ -148,7 +148,7 @@ radiance r depth = case intersectScene r of
                                                             pp = 0.25 + (0.5 * re)
                                                             rp = re / p
                                                             tp = tr / (1 - pp)
-                                                            r' | depth >= 2 = do pp' <- State random
+                                                            r' | depth >= 2 = do pp' <- State (randomR (0, 1))
                                                                                  if pp' < pp
                                                                                    then (|*| rp) <$> radiance reflRay (depth + 1)
                                                                                    else (|*| tp) <$> radiance (Ray x tdir) (depth + 1)
@@ -179,8 +179,8 @@ main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
                        pixel x y = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x y sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
                        subpixel x y sx sy = do Vec rx ry rz <- (|*| one_over_samp) . foldl1 (|+|) <$> replicateM samp (sample x y sx sy)
                                                return (Vec (clamp rx) (clamp ry) (clamp rz))
-                       sample x y sx sy = do r1 <- (2 *) <$> State random
-                                             r2 <- (2 *) <$> State random
+                       sample x y sx sy = do r1 <- State (randomR (0, 2))
+                                             r2 <- State (randomR (0, 2))
                                              let dx | r1 < 1 = sqrt r1 - 1
                                                     | otherwise = 1 - sqrt (2 - r1)
                                                  dy | r2 < 1 = sqrt r2 - 1
@@ -195,4 +195,4 @@ main = do let w = 1024
               h = 768
               showPixel (Vec r g b) = show (toInt r :: Int) ++ " " ++ show (toInt g :: Int) ++ " " ++ show (toInt b :: Int) ++ " "
           putStrLn ("P3\n" ++ show w ++ " " ++ show h ++ "\n255\n")
-          mapM_ (putStrLn . showPixel) (concat (main' w h 100) :: [Vec Float])
+          mapM_ (putStrLn . showPixel) (concat (main' w h 10) :: [Vec Double])
