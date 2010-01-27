@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PatternGuards, ScopedTypeVariables #-}
 module Main where
 
 import Control.Applicative
@@ -147,9 +147,8 @@ radiance' r depth obj t | depth >= 5 = return (emission obj) --R.R.
                                                  tp = tr / (1 - pp)
 
 radiance :: (Floating a, Ord a, Random a, RandomGen g) => Ray a -> Int -> State g (Vec a)
-radiance r depth = case intersectScene r of
-                     Nothing -> return (Vec 0 0 0)
-                     Just (obj, t) -> radiance' r depth obj t
+radiance r depth | Just (obj, t) <- intersectScene r = radiance' r depth obj t
+                 | otherwise = return (Vec 0 0 0)
 
 main' :: forall a. (Enum a, Floating a, NFData a, Ord a, Random a) => Int -> Int -> Int -> [[Vec a]]
 main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
