@@ -14,6 +14,9 @@ import Random
 data Vec a = Vec a a a
              deriving Show
 
+instance Functor Vec where
+  fmap f (Vec x y z) = Vec (f x) (f y) (f z)
+
 instance NFData a => NFData (Vec a) where
   rnf (Vec x y z) = rnf x `seq` rnf y `seq` rnf z
 
@@ -24,7 +27,7 @@ instance NFData a => NFData (Vec a) where
 (Vec x1 y1 z1) |-| (Vec x2 y2 z2) = Vec (x1 - x2) (y1 - y2) (z1 - z2)
 
 (|*|) :: Num a => Vec a -> a -> Vec a
-(Vec x y z) |*| n = Vec (x * n) (y * n) (z * n)
+v |*| n = fmap (* n) v
 
 vmult :: Num a => Vec a -> Vec a -> Vec a
 (Vec x1 y1 z1) `vmult` (Vec x2 y2 z2) = Vec (x1 * x2) (y1 * y2) (z1 * z2)
@@ -163,16 +166,15 @@ main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
                                     g = mkStdGen (y * y * y)
                                 in evalState (trace ("Line " ++ show y) m) g
                        pixel x y = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x y sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
-                       subpixel x y sx sy = do Vec rx ry rz <- (|*| one_over_samp) . foldl1 (|+|) <$> replicateM samp (sample x y sx sy)
-                                               return (Vec (clamp rx) (clamp ry) (clamp rz))
+                       subpixel x y sx sy = fmap clamp . (|*| one_over_samp) . foldl1 (|+|) <$> replicateM samp (sample x y sx sy)
                        sample x y sx sy = do r1 <- State (randomR (0, 2))
                                              r2 <- State (randomR (0, 2))
                                              let dx | r1 < 1 = sqrt r1 - 1
                                                     | otherwise = 1 - sqrt (2 - r1)
                                                  dy | r2 < 1 = sqrt r2 - 1
                                                     | otherwise = 1 - sqrt (2 - r2)
-                                                 d = (cx |*| (((((fromIntegral sx :: a) + 0.5 + dx) / 2 + (fromIntegral x :: a)) * one_over_w) - 0.5)) |+|
-                                                     (cy |*| (((((fromIntegral sy :: a) + 0.5 + dy) / 2 + (fromIntegral y :: a)) * one_over_h) - 0.5)) |+| camdir
+                                                 d = (cx |*| ((((fromIntegral sx + 0.5 + dx) / 2 + fromIntegral x) * one_over_w) - 0.5)) |+|
+                                                     (cy |*| ((((fromIntegral sy + 0.5 + dy) / 2 + fromIntegral y) * one_over_h) - 0.5)) |+| camdir
                                                  ray = Ray (campos |+| (d |*| 140.0)) (norm d)
                                              radiance ray 0
 
