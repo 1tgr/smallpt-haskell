@@ -10,6 +10,7 @@ import Debug.Trace
 import List
 import Maybe
 import Random
+import System
 
 data Vec a = Vec a a a
              deriving Show
@@ -179,8 +180,11 @@ main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
                                              radiance ray 0
 
 main :: IO ()
-main = do let w = 1024
+main = do args <- getArgs
+          let w = 1024
               h = 768
+              samp | s:_ <- args = read s `div` 4
+                   | otherwise = 1
               showPixel (Vec r g b) = show (toInt r :: Int) ++ " " ++ show (toInt g :: Int) ++ " " ++ show (toInt b :: Int) ++ " "
           putStrLn ("P3\n" ++ show w ++ " " ++ show h ++ "\n255\n")
-          mapM_ (putStrLn . showPixel) (concat (main' w h 2) :: [Vec Double])
+          mapM_ (putStrLn . showPixel) (concat (main' w h samp) :: [Vec Double])
