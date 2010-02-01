@@ -3,12 +3,12 @@ all: test
 build:
 	mkdir -p bin obj
 	hlint *.hs
-	ghc --make -Wall -O -threaded -o bin/global-illum -outputdir obj *.hs
+	ghc --make -Wall -O -threaded -o bin/smallpt -outputdir obj *.hs
 
 clean:
 	rm -r bin obj
 
-bin/global-illum.ppm: bin/global-illum
-	time bin/global-illum +RTS -N8 > bin/global-illum.ppm
+bin/smallpt.ppm: bin/smallpt
+	time bin/smallpt +RTS -N8 > bin/smallpt.ppm
 
-test: build bin/global-illum.ppm
+test: build bin/smallpt.ppm

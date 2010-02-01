@@ -1,0 +1,12 @@
+Name:           smallpt
+Version:        1.0
+Description:    A ray tracer demo with global illumination
+Author:         Tim Robinson
+Maintainer:     tim.g.robinson@gmail.com
+Build-Type:     Simple
+Cabal-Version:  >=1.2
+
+Executable smallpt
+  Main-is:        Main.hs
+  Build-Depends:  base >= 4, deepseq >= 1.1, haskell98  >= 1, mtl >= 1, parallel >= 2
+  ghc-options:    -Wall -threaded
