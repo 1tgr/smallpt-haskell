@@ -3,7 +3,7 @@ all: test
 build:
 	mkdir -p bin obj
 	hlint *.hs
-	ghc --make -Wall -O -threaded -o bin/smallpt -outputdir obj *.hs
+	ghc --make -Wall -O -threaded -o bin/smallpt -outputdir obj Main.hs
 
 clean:
 	rm -r bin obj
