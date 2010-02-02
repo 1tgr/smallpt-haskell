@@ -6,7 +6,7 @@ import Control.DeepSeq
 import Control.Monad.State
 import Control.Parallel.Strategies(parMap, rdeepseq)
 import Data.Ord
-import Debug.Trace
+import Graphics.GD
 import List
 import Maybe
 import Random
@@ -163,9 +163,7 @@ main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
                        camdir = norm (Vec 0 (-0.042612) (-1))
                        cx = Vec (0.5135 * one_over_h / one_over_w) 0 0
                        cy = norm (cx `cross` camdir) |*| 0.5135
-                       line y = let m = mapM (flip pixel y . subtract 1) [1..w]
-                                    g = mkStdGen (y * y * y)
-                                in evalState (trace ("Line " ++ show y) m) g
+                       line y = evalState (mapM (flip pixel y . subtract 1) [1..w]) (mkStdGen (y * y * y))
                        pixel x y = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x y sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
                        subpixel x y sx sy = fmap clamp . (|*| one_over_samp) . foldl1 (|+|) <$> replicateM samp (sample x y sx sy)
                        sample x y sx sy = do r1 <- State (randomR (0, 2))
@@ -185,6 +183,8 @@ main = do args <- getArgs
               h = 768
               samp | s:_ <- args = read s `div` 4
                    | otherwise = 1
-              showPixel (Vec r g b) = show (toInt r :: Int) ++ " " ++ show (toInt g :: Int) ++ " " ++ show (toInt b :: Int) ++ " "
-          putStrLn ("P3\n" ++ show w ++ " " ++ show h ++ "\n255\n")
-          mapM_ (putStrLn . showPixel) (concat (main' w h samp) :: [Vec Double])
+          image <- newImage (w, h)
+          let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x, y) (rgb r g b) image
+              setLinePixels (l, y) = zipWithM_ (setOnePixel y) [1..] l
+          mapM_ setLinePixels (zip (main' w h samp :: [[Vec Double]]) [1..])
+          savePngFile "image.png" image

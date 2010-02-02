@@ -8,5 +8,5 @@ Cabal-Version:  >=1.2
 
 Executable smallpt
   Main-is:        Main.hs
-  Build-Depends:  base >= 4, deepseq >= 1.1, haskell98  >= 1, mtl >= 1, parallel >= 2
+  Build-Depends:  base >= 4, deepseq >= 1.1, gd >= 3000.1.0, haskell98  >= 1, mtl >= 1, parallel >= 2
   ghc-options:    -Wall -threaded
