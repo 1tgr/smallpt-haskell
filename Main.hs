@@ -178,29 +178,49 @@ line context y = evalState (mapM (pixel . subtract 1) [1..w]) (mkStdGen (y * y *
                                                ray = Ray (campos |+| (d |*| 140.0)) (norm d)
                                            radiance ray 0
 
-submitWork :: (Show a, Read b) => [a] -> IO [b]
+collectBy :: Ord b => (a -> b) -> (a -> c) -> [a] -> [(b, [c])]
+collectBy key value = map (\g -> (key (head g), map value g))
+                    . groupBy (\a b -> key a == key b)
+                    . sortBy (comparing key)
+
+submitWork :: forall a b. (Show a, Read b) => [a] -> IO [b]
 submitWork l = do v <- newEmptyMVar
-                  threads <- zipWithM (invoke v) (cycle workers) l
+                  threads <- mapM (uncurry (invoke v)) tasks
                   results <- mapM (const (takeMVar v)) threads
-                  return [result | Left result <- results]
+                  case [message | Right message <- results] of
+                    message:_ -> fail message
+                    [] -> return
+                        $ map snd
+                        $ sortBy (comparing fst)
+                          [result | Left results' <- results, result <- results']
+
                where workers = replicate 8 ("/Users/Tim/Git/smallpt/bin/smallpt", ["-worker"])
-                     invoke v (p, a) w = forkIO (do putChar '>'
-                                                    hFlush stdout -- putStrLn ("Starting: " ++ message)
-                                                    (exitCode, out, err) <- readProcessWithExitCode p a (show w)
-                                                    putChar '<' -- putStrLn ("Finished: " ++ message)
-                                                    hFlush stdout
-                                                    case exitCode of
-                                                      ExitSuccess -> do putStr err
-                                                                        putMVar v (Left (read out))
-                                                      ExitFailure _ -> putMVar v (Right err))
-                                        -- where message = "readProcess " ++ show p ++ " " ++ show a -- ++ " " ++ show (show w)
+               
+                     tasks :: [((Int, (FilePath, [String])), [(Int, a)])]
+                     tasks = collectBy fst snd
+                           $ zip (cycle (zip [1..] workers)) 
+                           $ zip [1..]
+                             l
+
+                     invoke :: MVar (Either [(Int, b)] String) -> (Int, (FilePath, [String])) -> [(Int, a)] -> IO ThreadId
+                     invoke v (i, (p, a)) w = forkIO (do putStr (('>' : show i) ++ " ")
+                                                         hFlush stdout
+                                                         (exitCode, out, err) <- readProcessWithExitCode p a (show (map snd w))
+                                                         putStr (('<' : show i) ++ " ")
+                                                         hFlush stdout
+                                                         case exitCode of
+                                                           ExitSuccess -> do putStr err
+                                                                             putMVar v (Left (zip ids (read out)))
+                                                           ExitFailure _ -> putMVar v (Right err))
+                                              where ids = map fst w
 
 data Work a = RenderLine a Int
               deriving (Read, Show)
 
 main' :: forall a. (Enum a, Floating a, Ord a, Random a, Read a) => Int -> Int -> Int -> IO [[Vec a]]
 main' w h samp = submitWork (map (RenderLine context . (h -)) [1..h]) :: IO [[Vec a]]
-                 where context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
+                 where context :: Context a
+                       context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
                        camdir = norm (Vec 0 (-0.042612) (-1))
                        cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
                        cy = norm (cx `cross` camdir) |*| 0.5135
@@ -209,8 +229,9 @@ work :: (Read a, Show b) => IO () -> (a -> b) -> IO ()
 work coordinator worker = do pid <- getProcessID
                              args <- getArgs
                              case args of
-                               ["-worker"] -> do hPutStrLn stderr (show pid ++ " Hello from the worker")
-                                                 interact (show . worker . read)
+                               ["-worker"] -> do inputs <- read <$> getContents
+                                                 hPutStrLn stderr (show pid ++ " Hello from the worker - got " ++ show (length inputs) ++ " inputs")
+                                                 print (map worker inputs)
                                _ -> do hPutStrLn stderr (show pid ++ " Hello from the coordinator")
                                        coordinator
 
@@ -218,7 +239,7 @@ main :: IO ()
 main = work coordinator worker
        where coordinator = do args <- getArgs
                               let w = 1024
-                                  h = 16
+                                  h = 768
                                   samp | s:_ <- args = read s `div` 4
                                        | otherwise = 1
                               image <- newImage (w, h)
