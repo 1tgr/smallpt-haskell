@@ -8,7 +8,8 @@ build:
 clean:
 	rm -r bin obj
 
-bin/smallpt.ppm: bin/smallpt
-	time bin/smallpt +RTS -N8 > bin/smallpt.ppm
+bin/image.png: bin/smallpt
+	cd bin
+	time ./smallpt +RTS -N8
 
-test: build bin/smallpt.ppm
+test: build bin/image.png

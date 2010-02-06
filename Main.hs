@@ -2,24 +2,23 @@
 module Main where
 
 import Control.Applicative
-import Control.DeepSeq
+import Control.Concurrent
 import Control.Monad.State
-import Control.Parallel.Strategies(parMap, rdeepseq)
 import Data.Ord
 import Graphics.GD
 import List
 import Maybe
 import Random
 import System
+import System.IO
+import System.Process
+import System.Posix.Process
 
 data Vec a = Vec a a a
-             deriving Show
+             deriving (Read, Show)
 
 instance Functor Vec where
   fmap f (Vec x y z) = Vec (f x) (f y) (f z)
-
-instance NFData a => NFData (Vec a) where
-  rnf (Vec x y z) = rnf x `seq` rnf y `seq` rnf z
 
 (|+|) :: Num a => Vec a -> Vec a -> Vec a
 (Vec x1 y1 z1) |+| (Vec x2 y2 z2) = Vec (x1 + x2) (y1 + y2) (z1 + z2)
@@ -154,37 +153,78 @@ radiance :: (Floating a, Ord a, Random a, RandomGen g) => Ray a -> Int -> State 
 radiance r depth | Just (obj, t) <- intersectScene r = radiance' r depth obj t
                  | otherwise = return (Vec 0 0 0)
 
-main' :: forall a. (Enum a, Floating a, NFData a, Ord a, Random a) => Int -> Int -> Int -> [[Vec a]]
-main' w h samp = parMap rdeepseq (line . (h -)) [1..h]
-                 where one_over_w = 1.0 / fromIntegral w :: a
-                       one_over_h = 1.0 / fromIntegral h :: a
-                       one_over_samp = 1.0 / fromIntegral samp ::a
-                       campos = Vec 50 52 295.6
+data Context a = Context { ctxw :: Int,
+                           ctxh :: Int,
+                           ctxsamp :: Int,
+                           ctxcx :: Vec a,
+                           ctxcy :: Vec a,
+                           ctxcamdir :: Vec a,
+                           ctxcampos :: Vec a }
+                 deriving (Read, Show)
+
+line :: (Floating a, Ord a, Random a) => Context a -> Int -> [Vec a]
+line context y = evalState (mapM (pixel . subtract 1) [1..w]) (mkStdGen (y * y * y))
+                 where Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcamdir = camdir, ctxcampos = campos } = context
+                       pixel x = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
+                       subpixel x sx sy = fmap clamp . (|*| (1 / fromIntegral samp)) . foldl1 (|+|) <$> replicateM samp (sample x sx sy)
+                       sample x sx sy = do r1 <- State (randomR (0, 2))
+                                           r2 <- State (randomR (0, 2))
+                                           let dx | r1 < 1 = sqrt r1 - 1
+                                                  | otherwise = 1 - sqrt (2 - r1)
+                                               dy | r2 < 1 = sqrt r2 - 1
+                                                  | otherwise = 1 - sqrt (2 - r2)
+                                               d = (cx |*| ((((fromIntegral sx + 0.5 + dx) / 2 + fromIntegral x) / fromIntegral w) - 0.5)) |+|
+                                                   (cy |*| ((((fromIntegral sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h) - 0.5)) |+| camdir
+                                               ray = Ray (campos |+| (d |*| 140.0)) (norm d)
+                                           radiance ray 0
+
+submitWork :: (Show a, Read b) => [a] -> IO [b]
+submitWork l = do v <- newEmptyMVar
+                  threads <- zipWithM (invoke v) (cycle workers) l
+                  results <- mapM (const (takeMVar v)) threads
+                  return [result | Left result <- results]
+               where workers = replicate 8 ("/Users/Tim/Git/smallpt/bin/smallpt", ["-worker"])
+                     invoke v (p, a) w = forkIO (do putChar '>'
+                                                    hFlush stdout -- putStrLn ("Starting: " ++ message)
+                                                    (exitCode, out, err) <- readProcessWithExitCode p a (show w)
+                                                    putChar '<' -- putStrLn ("Finished: " ++ message)
+                                                    hFlush stdout
+                                                    case exitCode of
+                                                      ExitSuccess -> do putStr err
+                                                                        putMVar v (Left (read out))
+                                                      ExitFailure _ -> putMVar v (Right err))
+                                        -- where message = "readProcess " ++ show p ++ " " ++ show a -- ++ " " ++ show (show w)
+
+data Work a = RenderLine a Int
+              deriving (Read, Show)
+
+main' :: forall a. (Enum a, Floating a, Ord a, Random a, Read a) => Int -> Int -> Int -> IO [[Vec a]]
+main' w h samp = submitWork (map (RenderLine context . (h -)) [1..h]) :: IO [[Vec a]]
+                 where context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
                        camdir = norm (Vec 0 (-0.042612) (-1))
-                       cx = Vec (0.5135 * one_over_h / one_over_w) 0 0
+                       cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
                        cy = norm (cx `cross` camdir) |*| 0.5135
-                       line y = evalState (mapM (flip pixel y . subtract 1) [1..w]) (mkStdGen (y * y * y))
-                       pixel x y = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x y sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
-                       subpixel x y sx sy = fmap clamp . (|*| one_over_samp) . foldl1 (|+|) <$> replicateM samp (sample x y sx sy)
-                       sample x y sx sy = do r1 <- State (randomR (0, 2))
-                                             r2 <- State (randomR (0, 2))
-                                             let dx | r1 < 1 = sqrt r1 - 1
-                                                    | otherwise = 1 - sqrt (2 - r1)
-                                                 dy | r2 < 1 = sqrt r2 - 1
-                                                    | otherwise = 1 - sqrt (2 - r2)
-                                                 d = (cx |*| ((((fromIntegral sx + 0.5 + dx) / 2 + fromIntegral x) * one_over_w) - 0.5)) |+|
-                                                     (cy |*| ((((fromIntegral sy + 0.5 + dy) / 2 + fromIntegral y) * one_over_h) - 0.5)) |+| camdir
-                                                 ray = Ray (campos |+| (d |*| 140.0)) (norm d)
-                                             radiance ray 0
+
+work :: (Read a, Show b) => IO () -> (a -> b) -> IO ()
+work coordinator worker = do pid <- getProcessID
+                             args <- getArgs
+                             case args of
+                               ["-worker"] -> do hPutStrLn stderr (show pid ++ " Hello from the worker")
+                                                 interact (show . worker . read)
+                               _ -> do hPutStrLn stderr (show pid ++ " Hello from the coordinator")
+                                       coordinator
 
 main :: IO ()
-main = do args <- getArgs
-          let w = 1024
-              h = 768
-              samp | s:_ <- args = read s `div` 4
-                   | otherwise = 1
-          image <- newImage (w, h)
-          let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x, y) (rgb r g b) image
-              setLinePixels (l, y) = zipWithM_ (setOnePixel y) [1..] l
-          mapM_ setLinePixels (zip (main' w h samp :: [[Vec Double]]) [1..])
-          savePngFile "image.png" image
+main = work coordinator worker
+       where coordinator = do args <- getArgs
+                              let w = 1024
+                                  h = 16
+                                  samp | s:_ <- args = read s `div` 4
+                                       | otherwise = 1
+                              image <- newImage (w, h)
+                              colours <- main' w h samp :: IO [[Vec Double]]
+                              let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x, y) (rgb r g b) image
+                                  setLinePixels (l, y) = zipWithM_ (setOnePixel y) [1..] l
+                              mapM_ setLinePixels (zip colours [1..])
+                              savePngFile "image.png" image
+             worker (RenderLine context y) = line context y :: [Vec Double]
