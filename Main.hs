@@ -10,9 +10,9 @@ import List
 import Maybe
 import Random
 import System
+import System.Console.GetOpt
 import System.IO
 import System.Process
-import System.Posix.Process
 
 data Vec a = Vec a a a
              deriving (Read, Show)
@@ -183,69 +183,82 @@ collectBy key value = map (\g -> (key (head g), map value g))
                     . groupBy (\a b -> key a == key b)
                     . sortBy (comparing key)
 
-submitWork :: forall a b. (Show a, Read b) => [a] -> IO [b]
-submitWork l = do v <- newEmptyMVar
-                  threads <- mapM (uncurry (invoke v)) tasks
-                  results <- mapM (const (takeMVar v)) threads
-                  case [message | Right message <- results] of
-                    message:_ -> fail message
-                    [] -> return
-                        $ map snd
-                        $ sortBy (comparing fst)
-                          [result | Left results' <- results, result <- results']
+type Worker = (String, [String])
 
-               where workers = replicate 8 ("/Users/Tim/Git/smallpt/bin/smallpt", ["-worker"])
-               
-                     tasks :: [((Int, (FilePath, [String])), [(Int, a)])]
-                     tasks = collectBy fst snd
-                           $ zip (cycle (zip [1..] workers)) 
-                           $ zip [1..]
-                             l
+submitWork :: forall a b. (Show a, Read b) => [Worker] -> [a] -> IO [b]
+submitWork workers l = do v <- newEmptyMVar
+                          threads <- mapM (uncurry (invoke v)) tasks
+                          results <- mapM (const (takeMVar v)) threads
+                          case [message | Right message <- results] of
+                            message:_ -> fail message
+                            [] -> return
+                                $ map snd
+                                $ sortBy (comparing fst)
+                                  [result | Left results' <- results, result <- results']
 
-                     invoke :: MVar (Either [(Int, b)] String) -> (Int, (FilePath, [String])) -> [(Int, a)] -> IO ThreadId
-                     invoke v (i, (p, a)) w = forkIO (do putStr (('>' : show i) ++ " ")
-                                                         hFlush stdout
-                                                         (exitCode, out, err) <- readProcessWithExitCode p a (show (map snd w))
-                                                         putStr (('<' : show i) ++ " ")
-                                                         hFlush stdout
-                                                         case exitCode of
-                                                           ExitSuccess -> do putStr err
-                                                                             putMVar v (Left (zip ids (read out)))
-                                                           ExitFailure _ -> putMVar v (Right err))
-                                              where ids = map fst w
+                       where tasks :: [((Int, (FilePath, [String])), [(Int, a)])]
+                             tasks = collectBy fst snd
+                                   $ zip (cycle (zip [1..] workers))
+                                   $ zip [1..]
+                                     l
+
+                             invoke :: MVar (Either [(Int, b)] String) -> (Int, (FilePath, [String])) -> [(Int, a)] -> IO ThreadId
+                             invoke v (i, (p, a)) w = forkIO (do putStr (('>' : show i) ++ " ")
+                                                                 hFlush stdout
+                                                                 (exitCode, out, err) <- readProcessWithExitCode p a (show (map snd w))
+                                                                 putStr (('<' : show i) ++ " ")
+                                                                 hFlush stdout
+                                                                 case exitCode of
+                                                                   ExitSuccess -> do putStr err
+                                                                                     putMVar v (Left (zip ids (read out)))
+                                                                   ExitFailure _ -> putMVar v (Right err))
+                                                      where ids = map fst w
 
 data Work a = RenderLine a Int
               deriving (Read, Show)
 
-main' :: forall a. (Enum a, Floating a, Ord a, Random a, Read a) => Int -> Int -> Int -> IO [[Vec a]]
-main' w h samp = submitWork (map (RenderLine context . (h -)) [1..h]) :: IO [[Vec a]]
-                 where context :: Context a
-                       context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
-                       camdir = norm (Vec 0 (-0.042612) (-1))
-                       cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
-                       cy = norm (cx `cross` camdir) |*| 0.5135
+main' :: forall a. (Enum a, Floating a, Ord a, Random a, Read a) => Int -> Int -> Int -> [Worker] -> IO [[Vec a]]
+main' w h samp workers = submitWork workers (map (RenderLine context . (h -)) [1..h]) :: IO [[Vec a]]
+                         where context :: Context a
+                               context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
+                               camdir = norm (Vec 0 (-0.042612) (-1))
+                               cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
+                               cy = norm (cx `cross` camdir) |*| 0.5135
 
-work :: (Read a, Show b) => IO () -> (a -> b) -> IO ()
-work coordinator worker = do pid <- getProcessID
-                             args <- getArgs
-                             case args of
-                               ["-worker"] -> do inputs <- read <$> getContents
-                                                 hPutStrLn stderr (show pid ++ " Hello from the worker - got " ++ show (length inputs) ++ " inputs")
-                                                 print (map worker inputs)
-                               _ -> do hPutStrLn stderr (show pid ++ " Hello from the coordinator")
-                                       coordinator
+runWorker :: (Read a, Show b) => (a -> b) -> IO ()
+runWorker worker = interact (show . map worker . read)
+
+data Options = Options { optRunWorker :: Bool,
+                         optWidth :: Int,
+                         optHeight :: Int,
+                         optSamples :: Int }
+
+options :: [OptDescr (Options -> Options)]
+options = [Option "r" ["runWorker"] (NoArg (\opts -> opts { optRunWorker = True }))                          "act as a worker process",
+           Option "w" ["width"]     (ReqArg (\s opts -> opts { optWidth = read s }) "WIDTH")                 "image width",
+           Option "h" ["height"]    (ReqArg (\s opts -> opts { optHeight = read s }) "HEIGHT")               "image height",
+           Option "s" ["samples"]   (ReqArg (\s opts -> opts { optSamples = read s }) "SAMP")                "number of samples per pixel"]
+
+defaultOptions :: Options
+defaultOptions = Options { optRunWorker = False,
+                           optWidth = 1024,
+                           optHeight = 768,
+                           optSamples = 4,
+                           optOutput = "image.png" }
 
 main :: IO ()
-main = work coordinator worker
-       where coordinator = do args <- getArgs
-                              let w = 1024
-                                  h = 768
-                                  samp | s:_ <- args = read s `div` 4
-                                       | otherwise = 1
-                              image <- newImage (w, h)
-                              colours <- main' w h samp :: IO [[Vec Double]]
-                              let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x, y) (rgb r g b) image
-                                  setLinePixels (l, y) = zipWithM_ (setOnePixel y) [1..] l
-                              mapM_ setLinePixels (zip colours [1..])
-                              savePngFile "image.png" image
-             worker (RenderLine context y) = line context y :: [Vec Double]
+main = do args <- getOpt Permute options <$> getArgs
+          case args of
+            (o, workers, []) -> case foldl (flip id) defaultOptions o of
+                                  Options { optRunWorker = True } -> let worker (RenderLine context y) = line context y :: [Vec Double] in runWorker worker
+                                  Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } ->
+                                    if workers == []
+                                      then ioError (userError "Need at least one worker with -worker")
+                                      else do let makeArgv s = let x:xs = words s in (x, xs)
+                                              image <- newImage (w, h)
+                                              colours <- main' w h samples (map makeArgv workers) :: IO [[Vec Double]]
+                                              let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x - 1, y - 1) (rgb r g b) image
+                                                  setLinePixels (l, y) = zipWithM_ (setOnePixel y) [1..] l
+                                              mapM_ setLinePixels (zip colours [1..])
+                                              savePngFile output image
+            (_, _, errs) -> ioError (userError (concat errs ++ usageInfo "Usage: smallpt [OPTION...]" options))

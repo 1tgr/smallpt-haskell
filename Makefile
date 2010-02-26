@@ -10,6 +10,6 @@ clean:
 
 bin/image.png: bin/smallpt
 	cd bin
-	time ./smallpt +RTS -N8
+	time ./smallpt
 
 test: build bin/image.png
