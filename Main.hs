@@ -234,10 +234,10 @@ data Options = Options { optRunWorker :: Bool,
                          optSamples :: Int }
 
 options :: [OptDescr (Options -> Options)]
-options = [Option "r" ["runWorker"] (NoArg (\opts -> opts { optRunWorker = True }))                          "act as a worker process",
-           Option "w" ["width"]     (ReqArg (\s opts -> opts { optWidth = read s }) "WIDTH")                 "image width",
-           Option "h" ["height"]    (ReqArg (\s opts -> opts { optHeight = read s }) "HEIGHT")               "image height",
-           Option "s" ["samples"]   (ReqArg (\s opts -> opts { optSamples = read s }) "SAMP")                "number of samples per pixel"]
+options = [Option "r" ["runWorker"] (NoArg (\opts -> opts { optRunWorker = True }))            "act as a worker process",
+           Option "w" ["width"]     (ReqArg (\s opts -> opts { optWidth = read s }) "WIDTH")   "image width",
+           Option "h" ["height"]    (ReqArg (\s opts -> opts { optHeight = read s }) "HEIGHT") "image height",
+           Option "s" ["samples"]   (ReqArg (\s opts -> opts { optSamples = read s }) "SAMP")  "number of samples per pixel"]
 
 defaultOptions :: Options
 defaultOptions = Options { optRunWorker = False,
