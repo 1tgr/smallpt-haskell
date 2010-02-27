@@ -234,12 +234,12 @@ data Options = Options { optRunWorker :: Bool,
                          optSamples :: Int,
                          optOutput :: String }
 
-options :: [OptDescr (Options -> Options)]
-options = [Option "r" ["runWorker"] (NoArg (\opts -> opts { optRunWorker = True }))            "act as a worker process",
-           Option "w" ["width"]     (ReqArg (\s opts -> opts { optWidth = read s }) "WIDTH")   "image width",
-           Option "h" ["height"]    (ReqArg (\s opts -> opts { optHeight = read s }) "HEIGHT") "image height",
-           Option "s" ["samples"]   (ReqArg (\s opts -> opts { optSamples = read s }) "SAMP")  "number of samples per pixel",
-           Option "o" ["output"]    (ReqArg (\s opts -> opts { optOutput = s }) "FILE")        "image file name"]
+options :: [OptDescr (Options -> IO Options)]
+options = [Option "r" ["runWorker"] (NoArg (\opts -> return (opts { optRunWorker = True })))                   "act as a worker process",
+           Option "w" ["width"]     (ReqArg (\s opts -> (\i -> opts { optWidth = i }) <$> readIO s) "WIDTH")   "image width",
+           Option "h" ["height"]    (ReqArg (\s opts -> (\i -> opts { optHeight = i }) <$> readIO s) "HEIGHT") "image height",
+           Option "s" ["samples"]   (ReqArg (\s opts -> (\i -> opts { optSamples = i }) <$> readIO s) "SAMP")  "number of samples per pixel",
+           Option "o" ["output"]    (ReqArg (\s opts -> return (opts { optOutput = s })) "FILE")               "image file name"]
 
 defaultOptions :: Options
 defaultOptions = Options { optRunWorker = False,
@@ -251,16 +251,18 @@ defaultOptions = Options { optRunWorker = False,
 main :: IO ()
 main = do args <- getOpt Permute options <$> getArgs
           case args of
-            (o, workers, []) -> case foldl (flip id) defaultOptions o of
-                                  Options { optRunWorker = True } -> let worker (RenderLine context y) = line context y :: [Vec Double] in runWorker worker
-                                  Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } ->
-                                    if workers == []
-                                      then ioError (userError "Need at least one worker with -worker")
-                                      else do let makeArgv s = let x:xs = words s in (x, xs)
-                                              image <- newImage (w, h)
-                                              colours <- main' w h samples (map makeArgv workers) :: IO [[Vec Double]]
-                                              let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x - 1, y - 1) (rgb r g b) image
-                                                  setLinePixels (l, y) = zipWithM_ (setOnePixel y) [1..] l
-                                              mapM_ setLinePixels (zip colours [1..])
-                                              savePngFile output image
-            (_, _, errs) -> ioError (userError (concat errs ++ usageInfo "Usage: smallpt [OPTION...]" options))
+            (o, workers, []) -> do opts <- foldl (>>=) (return defaultOptions) o `catch` const (usage [])
+                                   case opts of
+                                     Options { optRunWorker = True } -> let worker (RenderLine context y) = line context y :: [Vec Double] in runWorker worker
+                                     Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } ->
+                                       if workers == []
+                                         then usage ["Need at least one worker\n"]
+                                         else do let makeArgv s = let x:xs = words s in (x, xs)
+                                                 image <- newImage (w, h)
+                                                 colours <- main' w h samples (map makeArgv workers) :: IO [[Vec Double]]
+                                                 let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x, y) (rgb r g b) image
+                                                     setLinePixels (l, y) = zipWithM_ (setOnePixel y) [0..] l
+                                                 mapM_ setLinePixels (zip colours [0..])
+                                                 savePngFile output image
+            (_, _, errs) -> usage errs
+       where usage errs = ioError (userError (concat errs ++ usageInfo "Usage: smallpt [OPTION...] workers..." options))
