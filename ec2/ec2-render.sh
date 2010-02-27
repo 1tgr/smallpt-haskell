@@ -3,7 +3,7 @@ smallpt=dist/build/smallpt/smallpt
 
 function makeWorkers {
   yes "\"$smallpt -r\"" | head -n 8
-  aws describe-instances --simple | awk '$2 == "running" { printf "\"ssh root@%s /root/.cabal/bin/smallpt -r\"\n", $3 }'
+  aws describe-instances --simple | awk '$2 == "running" { printf "\"ssh root@%s smallpt -r\"\n", $3 }'
 }
 
 twidge update "`date +%T` Render is starting"
