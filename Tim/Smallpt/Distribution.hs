@@ -1,9 +1,7 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 module Tim.Smallpt.Distribution (Coordinator(..), coordinator) where
 
-import Control.Applicative
 import Control.Concurrent
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, try)
 import Data.Ord
 import Data.List
 import System
@@ -45,9 +43,6 @@ invoke (num, worker) work = do putStr (('>' : show num) ++ " ")
                                  ExitFailure _ -> fail err
                            where ids = map fst work
 
-catching :: IO a -> IO (Either a IOError)
-catching m = (Left <$> m) `catch` (return . Right)
-
 collectBy :: Ord b => (a -> b) -> (a -> c) -> [a] -> [(b, [c])]
 collectBy key value = map (\g -> (key (head g), map value g))
                     . groupBy (\a b -> key a == key b)
@@ -58,16 +53,16 @@ makeTasks workers = collectBy fst snd
                   . zip (cycle (zip [1..] workers))
                   . zip [1..]
 
-submitWork' :: forall a b. (Show a, Read b) => [String] -> [a] -> IO [b]
+submitWork' :: (Show a, Read b) => [String] -> [a] -> IO [b]
 submitWork' workers work = do v <- newEmptyMVar
-                              threads <- mapM (forkIO . (putMVar v =<<) . catching . uncurry invoke) (makeTasks workers work)
+                              threads <- mapM (forkIO . (putMVar v =<<) . try . uncurry invoke) (makeTasks workers work)
                               results <- mapM (const (takeMVar v)) threads
-                              case [ioe | Right ioe <- results] of
+                              case [ioe | Left ioe <- results] of
                                 ioe:_ -> ioError ioe 
                                 [] -> return
                                     $ map snd
                                     $ sortBy (comparing fst)
-                                      [result | Left results' <- results, result <- results']
+                                      [result | Right results' <- results, result <- results']
 
 data (Show a, Read b) => Coordinator a b = Coordinator { submitWork :: [String] -> [a] -> IO [b],
                                                          runWorker :: IO () }
