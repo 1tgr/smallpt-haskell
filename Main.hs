@@ -12,6 +12,7 @@ import Random
 import System
 import System.Console.GetOpt
 import System.IO
+import System.IO.Error
 import System.Process
 
 data Vec a = Vec a a a
@@ -183,9 +184,7 @@ collectBy key value = map (\g -> (key (head g), map value g))
                     . groupBy (\a b -> key a == key b)
                     . sortBy (comparing key)
 
-type Worker = (String, [String])
-
-submitWork :: forall a b. (Show a, Read b) => [Worker] -> [a] -> IO [b]
+submitWork :: forall a b. (Show a, Read b) => [String] -> [a] -> IO [b]
 submitWork workers l = do v <- newEmptyMVar
                           threads <- mapM (uncurry (invoke v)) tasks
                           results <- mapM (const (takeMVar v)) threads
@@ -196,14 +195,14 @@ submitWork workers l = do v <- newEmptyMVar
                                 $ sortBy (comparing fst)
                                   [result | Left results' <- results, result <- results']
 
-                       where tasks :: [((Int, (FilePath, [String])), [(Int, a)])]
+                       where tasks :: [((Int, String), [(Int, a)])]
                              tasks = collectBy fst snd
                                    $ zip (cycle (zip [1..] workers))
                                    $ zip [1..]
                                      l
 
-                             invoke :: MVar (Either [(Int, b)] String) -> (Int, (FilePath, [String])) -> [(Int, a)] -> IO ThreadId
-                             invoke v (i, (p, a)) w = forkIO (do putStr (('>' : show i) ++ " ")
+                             invoke :: MVar (Either [(Int, b)] String) -> (Int, String) -> [(Int, a)] -> IO ThreadId
+                             invoke v (i, worker) w = forkIO (do putStr (('>' : show i) ++ " ")
                                                                  hFlush stdout
                                                                  (exitCode, out, err) <- readProcessWithExitCode p a (show (map snd w))
                                                                  putStr (('<' : show i) ++ " ")
@@ -213,11 +212,12 @@ submitWork workers l = do v <- newEmptyMVar
                                                                                      putMVar v (Left (zip ids (read out)))
                                                                    ExitFailure _ -> putMVar v (Right err))
                                                       where ids = map fst w
+                                                            p:a = words worker
 
 data Work a = RenderLine a Int
               deriving (Read, Show)
 
-main' :: forall a. (Enum a, Floating a, Ord a, Random a, Read a) => Int -> Int -> Int -> [Worker] -> IO [[Vec a]]
+main' :: forall a. (Enum a, Floating a, Ord a, Random a, Read a) => Int -> Int -> Int -> [String] -> IO [[Vec a]]
 main' w h samp workers = submitWork workers (map (RenderLine context . (h -)) [1..h]) :: IO [[Vec a]]
                          where context :: Context a
                                context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
@@ -235,11 +235,11 @@ data Options = Options { optRunWorker :: Bool,
                          optOutput :: String }
 
 options :: [OptDescr (Options -> IO Options)]
-options = [Option "r" ["runWorker"] (NoArg (\opts -> return (opts { optRunWorker = True })))                   "act as a worker process",
-           Option "w" ["width"]     (ReqArg (\s opts -> (\i -> opts { optWidth = i }) <$> readIO s) "WIDTH")   "image width",
-           Option "h" ["height"]    (ReqArg (\s opts -> (\i -> opts { optHeight = i }) <$> readIO s) "HEIGHT") "image height",
-           Option "s" ["samples"]   (ReqArg (\s opts -> (\i -> opts { optSamples = i }) <$> readIO s) "SAMP")  "number of samples per pixel",
-           Option "o" ["output"]    (ReqArg (\s opts -> return (opts { optOutput = s })) "FILE")               "image file name"]
+options = [Option "r" ["worker"]  (NoArg (\opts -> return (opts { optRunWorker = True })))                   "act as a worker process",
+           Option "w" ["width"]   (ReqArg (\s opts -> (\i -> opts { optWidth = i }) <$> readIO s) "WIDTH")   "image width",
+           Option "h" ["height"]  (ReqArg (\s opts -> (\i -> opts { optHeight = i }) <$> readIO s) "HEIGHT") "image height",
+           Option "s" ["samples"] (ReqArg (\s opts -> (\i -> opts { optSamples = i }) <$> readIO s) "SAMP")  "number of samples per pixel",
+           Option "o" ["output"]  (ReqArg (\s opts -> return (opts { optOutput = s })) "FILE")               "image file name"]
 
 defaultOptions :: Options
 defaultOptions = Options { optRunWorker = False,
@@ -249,20 +249,20 @@ defaultOptions = Options { optRunWorker = False,
                            optOutput = "image.png" }
 
 main :: IO ()
-main = do args <- getOpt Permute options <$> getArgs
-          case args of
-            (o, workers, []) -> do opts <- foldl (>>=) (return defaultOptions) o `catch` const (usage [])
-                                   case opts of
-                                     Options { optRunWorker = True } -> let worker (RenderLine context y) = line context y :: [Vec Double] in runWorker worker
-                                     Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } ->
-                                       if workers == []
-                                         then usage ["Need at least one worker\n"]
-                                         else do let makeArgv s = let x:xs = words s in (x, xs)
-                                                 image <- newImage (w, h)
-                                                 colours <- main' w h samples (map makeArgv workers) :: IO [[Vec Double]]
-                                                 let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x, y) (rgb r g b) image
-                                                     setLinePixels (l, y) = zipWithM_ (setOnePixel y) [0..] l
-                                                 mapM_ setLinePixels (zip colours [0..])
-                                                 savePngFile output image
-            (_, _, errs) -> usage errs
-       where usage errs = ioError (userError (concat errs ++ usageInfo "Usage: smallpt [OPTION...] workers..." options))
+main = catch (do args <- getOpt Permute options <$> getArgs
+                 case args of
+                   (o, workers, []) -> do opts <- foldl (>>=) (return defaultOptions) o `catch` const (usage [])
+                                          case opts of
+                                            Options { optRunWorker = True } -> let worker (RenderLine context y) = line context y :: [Vec Double] in runWorker worker
+                                            Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } ->
+                                              if workers == []
+                                                then usage ["Need at least one worker"]
+                                                else do image <- newImage (w, h)
+                                                        colours <- main' w h samples workers :: IO [[Vec Double]]
+                                                        let setOnePixel y x v = let Vec r g b = fmap toInt v in setPixel (x, y) (rgb r g b) image
+                                                            setLinePixels (l, y) = zipWithM_ (setOnePixel y) [0..] l
+                                                        mapM_ setLinePixels (zip colours [0..])
+                                                        savePngFile output image
+                   (_, _, errs) -> usage errs)
+             (putStrLn . ioeGetErrorString)
+       where usage errs = ioError (userError (concat (intersperse "\n" (errs ++ [usageInfo "Usage: smallpt [OPTION...] workers..." options]))))
