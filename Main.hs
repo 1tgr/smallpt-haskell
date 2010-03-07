@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternGuards #-}
 module Main where
 
 import Control.Applicative
@@ -45,16 +46,15 @@ makeImage w h colours = do image <- newImage (w, h)
 main :: IO ()
 main = catch (do args <- getOpt Permute options <$> getArgs
                  case args of
-                   (o, workers, []) -> do opts <- foldl (>>=) (return defaultOptions) o `catch` const (usage [])
+                   (o, workers, []) -> do let coord = coordinator (\(RenderLine context y) -> line context y :: [Vec Double])
+                                          opts <- foldl (>>=) (return defaultOptions) o `catch` const (usage [])
                                           case opts of
-                                            Options { optRunWorker = True } -> let worker (RenderLine context y) = line context y :: [Vec Double] in runWorker worker
-                                            Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } ->
-                                              if workers == []
-                                                then usage ["Need at least one worker"]
-                                                else do let work :: [Work (Context Double)]
-                                                            work = makeWork w h samples
-                                                        colours <- submitWork workers work :: IO [[Vec Double]]
-                                                        savePngFile output =<< makeImage w h colours
+                                            Options { optRunWorker = True } -> runWorker coord
+                                            Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } | _:_ <- workers ->
+                                              submitWork coord workers (makeWork w h samples)
+                                                >>= makeImage w h
+                                                >>= savePngFile output
+                                            _ -> usage ["Need at least one worker"]
                    (_, _, errs) -> usage errs)
              (putStrLn . ioeGetErrorString)
        where usage errs = ioError (userError (concat (intersperse "\n" (errs ++ [usageInfo "Usage: smallpt [OPTION...] workers..." options]))))
