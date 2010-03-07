@@ -3,6 +3,7 @@ module Tim.Smallpt.Distribution (Coordinator(..), coordinator) where
 
 import Control.Applicative
 import Control.Concurrent
+import Control.Exception (evaluate)
 import Data.Ord
 import Data.List
 import System
@@ -12,7 +13,30 @@ import System.Process
 invoke :: (Show a, Read b) => (Int, String) -> [(Int, a)] -> IO [(Int, b)]
 invoke (num, worker) work = do putStr (('>' : show num) ++ " ")
                                hFlush stdout
-                               (exitCode, out, err) <- readProcessWithExitCode p a (show (map snd work))
+
+                               (Just inh, Just outh, Just errh, pid) <-
+                                   createProcess (shell worker){ std_in  = CreatePipe,
+                                                                 std_out = CreatePipe,
+                                                                 std_err = CreatePipe }
+
+                               outMVar <- newEmptyMVar
+
+                               out <- hGetContents outh
+                               _ <- forkIO $ evaluate (length out) >> putMVar outMVar ()
+
+                               err <- hGetContents errh
+                               _ <- forkIO $ evaluate (length err) >> putMVar outMVar ()
+
+                               hPrint inh (map snd work)
+                               hFlush inh
+                               hClose inh
+
+                               takeMVar outMVar
+                               takeMVar outMVar
+                               hClose outh
+
+                               exitCode <- waitForProcess pid
+                               
                                putStr (('<' : show num) ++ " ")
                                hFlush stdout
                                case exitCode of
@@ -20,7 +44,6 @@ invoke (num, worker) work = do putStr (('>' : show num) ++ " ")
                                                    return (zip ids (read out))
                                  ExitFailure _ -> fail err
                            where ids = map fst work
-                                 p:a = words worker
 
 catching :: IO a -> IO (Either a IOError)
 catching m = (Left <$> m) `catch` (return . Right)
