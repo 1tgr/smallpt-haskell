@@ -1,69 +1,68 @@
 module Tim.Smallpt.Distribution (Coordinator(..), coordinator) where
 
+import Control.Applicative
 import Control.Concurrent
 import Control.Exception (evaluate, try)
 import Control.Monad
 import Data.Ord
 import Data.List
+import Data.Time
 import System
 import System.IO
 import System.Process
+import Text.Printf
 
-invoke :: (Show a, Read b) => (Int, String) -> [(Int, a)] -> IO [(Int, b)]
-invoke (num, worker) work = do putStr (('>' : show num) ++ "@" ++ show (length work) ++ " ")
-                               hFlush stdout
+invoke :: (Show a, Read b) => String -> [(Int, a)] -> IO [(Int, b)]
+invoke worker task = do (Just inh, Just outh, Just errh, pid) <- createProcess (shell worker){ std_in  = CreatePipe,
+                                                                                               std_out = CreatePipe,
+                                                                                               std_err = CreatePipe }
 
-                               (Just inh, Just outh, Just errh, pid) <-
-                                   createProcess (shell worker){ std_in  = CreatePipe,
-                                                                 std_out = CreatePipe,
-                                                                 std_err = CreatePipe }
+                        outMVar <- newEmptyMVar
 
-                               outMVar <- newEmptyMVar
+                        out <- hGetContents outh
+                        _ <- forkIO $ evaluate (length out) >> putMVar outMVar ()
 
-                               out <- hGetContents outh
-                               _ <- forkIO $ evaluate (length out) >> putMVar outMVar ()
+                        err <- hGetContents errh
+                        _ <- forkIO $ evaluate (length err) >> putMVar outMVar ()
 
-                               err <- hGetContents errh
-                               _ <- forkIO $ evaluate (length err) >> putMVar outMVar ()
+                        hPrint inh (map snd task)
+                        hFlush inh
+                        hClose inh
 
-                               hPrint inh (map snd work)
-                               hFlush inh
-                               hClose inh
+                        takeMVar outMVar
+                        takeMVar outMVar
+                        hClose outh
 
-                               takeMVar outMVar
-                               takeMVar outMVar
-                               hClose outh
+                        exitCode <- waitForProcess pid
 
-                               exitCode <- waitForProcess pid
-                               
-                               putStr (('<' : show num) ++ " ")
-                               hFlush stdout
-                               case exitCode of
-                                 ExitSuccess -> do putStr err
-                                                   return (zip ids (read out))
-                                 ExitFailure _ -> fail err
-                           where ids = map fst work
+                        hFlush stdout
+                        case exitCode of
+                          ExitSuccess -> do putStr err
+                                            return (zip (map fst task) (read out))
+                          ExitFailure _ -> fail err
 
 makeTasks :: Int -> [a] -> [[a]]
 makeTasks n tasks = case splitAt n tasks of
                       ([], _) -> []
                       (firstN, rest) -> firstN : makeTasks n rest
 
-workerLoop :: (Show a, Read b) => MVar [[(Int, a)]] -> MVar (Either IOError [(Int, b)]) -> (Int, String) -> IO ()
-workerLoop tasksMVar resultsMVar (num, worker) = loop
-                                                 where loop = do task <- takeMVar tasksMVar
-                                                                 case task of
-                                                                   x:xs -> do putMVar tasksMVar xs
-                                                                              results <- try (invoke (num, worker) x)
-                                                                              putMVar resultsMVar results
-                                                                              loop
-                                                                   [] -> return ()
-
 submitWork' :: (Show a, Read b) => [String] -> [a] -> IO [b]
 submitWork' workers work = do let tasks = makeTasks 10 (zip [1..] work)
                               tasksMVar <- newMVar tasks
                               resultsMVar <- newEmptyMVar
-                              mapM_ (forkIO . workerLoop tasksMVar resultsMVar) (zip [1..] workers)
+                              startTime <- getCurrentTime
+                              let workerLoop n f = do task <- takeMVar tasksMVar
+                                                      case task of
+                                                        x:xs -> do putMVar tasksMVar xs
+                                                                   stampLn ">"
+                                                                   putMVar resultsMVar =<< f x
+                                                                   stampLn "<"
+                                                                   workerLoop n f
+                                                        [] -> return ()
+                                                   where stampLn s = do d <- flip diffUTCTime startTime <$> getCurrentTime
+                                                                        let seconds = fromRational (toRational d) :: Double
+                                                                        putStrLn (printf "%f %d %s" seconds n s)
+                              zipWithM_ (\n w -> forkIO (workerLoop n (try . invoke w))) [1 :: Int ..] workers
                               results <- replicateM (length tasks) (takeMVar resultsMVar)
                               case [ioe | Left ioe <- results] of
                                 ioe:_ -> ioError ioe 
