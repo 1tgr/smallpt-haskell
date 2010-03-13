@@ -2,6 +2,7 @@ module Tim.Smallpt.Distribution (Coordinator(..), coordinator) where
 
 import Control.Concurrent
 import Control.Exception (evaluate, try)
+import Control.Monad
 import Data.Ord
 import Data.List
 import System
@@ -9,7 +10,7 @@ import System.IO
 import System.Process
 
 invoke :: (Show a, Read b) => (Int, String) -> [(Int, a)] -> IO [(Int, b)]
-invoke (num, worker) work = do putStr (('>' : show num) ++ " ")
+invoke (num, worker) work = do putStr (('>' : show num) ++ "@" ++ show (length work) ++ " ")
                                hFlush stdout
 
                                (Just inh, Just outh, Just errh, pid) <-
@@ -43,20 +44,27 @@ invoke (num, worker) work = do putStr (('>' : show num) ++ " ")
                                  ExitFailure _ -> fail err
                            where ids = map fst work
 
-collectBy :: Ord b => (a -> b) -> (a -> c) -> [a] -> [(b, [c])]
-collectBy key value = map (\g -> (key (head g), map value g))
-                    . groupBy (\a b -> key a == key b)
-                    . sortBy (comparing key)
+makeTasks :: Int -> [a] -> [[a]]
+makeTasks n tasks = case splitAt n tasks of
+                      ([], _) -> []
+                      (firstN, rest) -> firstN : makeTasks n rest
 
-makeTasks :: Ord a => [a] -> [b] -> [((Int, a), [(Int, b)])]
-makeTasks workers = collectBy fst snd
-                  . zip (cycle (zip [1..] workers))
-                  . zip [1..]
+workerLoop :: (Show a, Read b) => MVar [[(Int, a)]] -> MVar (Either IOError [(Int, b)]) -> (Int, String) -> IO ()
+workerLoop tasksMVar resultsMVar (num, worker) = loop
+                                                 where loop = do task <- takeMVar tasksMVar
+                                                                 case task of
+                                                                   x:xs -> do putMVar tasksMVar xs
+                                                                              results <- try (invoke (num, worker) x)
+                                                                              putMVar resultsMVar results
+                                                                              loop
+                                                                   [] -> return ()
 
 submitWork' :: (Show a, Read b) => [String] -> [a] -> IO [b]
-submitWork' workers work = do v <- newEmptyMVar
-                              threads <- mapM (forkIO . (putMVar v =<<) . try . uncurry invoke) (makeTasks workers work)
-                              results <- mapM (const (takeMVar v)) threads
+submitWork' workers work = do let tasks = makeTasks 10 (zip [1..] work)
+                              tasksMVar <- newMVar tasks
+                              resultsMVar <- newEmptyMVar
+                              mapM_ (forkIO . workerLoop tasksMVar resultsMVar) (zip [1..] workers)
+                              results <- replicateM (length tasks) (takeMVar resultsMVar)
                               case [ioe | Left ioe <- results] of
                                 ioe:_ -> ioError ioe 
                                 [] -> return
