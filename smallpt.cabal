@@ -8,5 +8,6 @@ Cabal-Version:  >=1.2
 
 Executable smallpt
   Main-is:        Main.hs
-  Build-Depends:  base >= 4, gd >= 3000.1.0, haskell98  >= 1, mtl >= 1, process >= 1, time >= 1
+  Build-Depends:  base >= 4, containers >= 0.1, gd >= 3000.1.0, haskell98  >= 1, mtl >= 1, process >= 1, time >= 1, xhtml >= 3000
   ghc-options:    -Wall
+  other-modules:  Tim.Smallpt.Chart Tim.Smallpt.Distribution Tim.Smallpt.Render

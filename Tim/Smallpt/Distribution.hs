@@ -1,16 +1,14 @@
 module Tim.Smallpt.Distribution (Coordinator(..), coordinator) where
 
-import Control.Applicative
 import Control.Concurrent
-import Control.Exception (evaluate, try)
+import Control.Exception (evaluate, try, finally)
 import Control.Monad
 import Data.Ord
 import Data.List
-import Data.Time
 import System
 import System.IO
 import System.Process
-import Text.Printf
+import Tim.Smallpt.Chart
 
 invoke :: (Show a, Read b) => String -> [(Int, a)] -> IO [(Int, b)]
 invoke worker task = do (Just inh, Just outh, Just errh, pid) <- createProcess (shell worker){ std_in  = CreatePipe,
@@ -46,24 +44,25 @@ makeTasks n tasks = case splitAt n tasks of
                       ([], _) -> []
                       (firstN, rest) -> firstN : makeTasks n rest
 
+process :: MVar [a] -> (a -> IO ()) -> IO ()
+process queueMVar m = loop
+                      where loop = do queue <- takeMVar queueMVar
+                                      case queue of
+                                        x:xs -> do putMVar queueMVar xs
+                                                   m x
+                                                   loop
+                                        [] -> return ()
+
 submitWork' :: (Show a, Read b) => [String] -> [a] -> IO [b]
-submitWork' workers work = do let tasks = makeTasks 10 (zip [1..] work)
+submitWork' workers work = do chart <- makeChart
+                              let tasks = makeTasks 10 (zip [1..] work)
                               tasksMVar <- newMVar tasks
                               resultsMVar <- newEmptyMVar
-                              startTime <- getCurrentTime
-                              let workerLoop n f = do task <- takeMVar tasksMVar
-                                                      case task of
-                                                        x:xs -> do putMVar tasksMVar xs
-                                                                   stampLn ">"
-                                                                   putMVar resultsMVar =<< f x
-                                                                   stampLn "<"
-                                                                   workerLoop n f
-                                                        [] -> return ()
-                                                   where stampLn s = do d <- flip diffUTCTime startTime <$> getCurrentTime
-                                                                        let seconds = fromRational (toRational d) :: Double
-                                                                        putStrLn (printf "%f %d %s" seconds n s)
-                              zipWithM_ (\n w -> forkIO (workerLoop n (try . invoke w))) [1 :: Int ..] workers
+                              let invoke' n worker task = do leave <- chartEnter chart n
+                                                             putMVar resultsMVar =<< try (invoke worker task) `finally` leave
+                              zipWithM_ (((forkIO . process tasksMVar) .) . invoke') [1 :: Int ..] workers
                               results <- replicateM (length tasks) (takeMVar resultsMVar)
+                              chartSave chart
                               case [ioe | Left ioe <- results] of
                                 ioe:_ -> ioError ioe 
                                 [] -> return
