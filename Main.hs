@@ -13,6 +13,17 @@ import System.IO.Error
 import Tim.Smallpt.Distribution
 import Tim.Smallpt.Render
 
+spheres :: Fractional a => [Sphere a]
+spheres = [Sphere { radius = 1e5,  position = Vec (1+1e5) 40.8 81.6,    emission = Vec 0 0 0,    colour = Vec 0.75 0.25 0.25,  refl = DIFF},--Left
+           Sphere { radius = 1e5,  position = Vec (99-1e5) 40.8 81.6,   emission = Vec 0 0 0,    colour = Vec 0.25 0.25 0.75,  refl = DIFF},--Rght
+           Sphere { radius = 1e5,  position = Vec 50 40.8 1e5,          emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Back
+           Sphere { radius = 1e5,  position = Vec 50 40.8 (170-1e5),    emission = Vec 0 0 0,    colour = Vec 0 0 0,           refl = DIFF},--Frnt
+           Sphere { radius = 1e5,  position = Vec 50 1e5 81.6,          emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Botm
+           Sphere { radius = 1e5,  position = Vec 50 (81.6-1e5) 81.6,   emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Top
+           Sphere { radius = 16.5, position = Vec 27 16.5 47,           emission = Vec 0 0 0,    colour = Vec 1 1 1 |*| 0.999, refl = SPEC},--Mirr
+           Sphere { radius = 16.5, position = Vec 73 16.5 78,           emission = Vec 0 0 0,    colour = Vec 1 1 1 |*| 0.999, refl = REFR},--Glas
+           Sphere { radius = 600,  position = Vec 50 (681.6-0.27) 81.6, emission = Vec 12 12 12, colour = Vec 0 0 0,           refl = DIFF}] --Lite
+
 data Options = Options { optRunWorker :: Bool,
                          optWidth :: Int,
                          optHeight :: Int,
@@ -51,7 +62,7 @@ main = catch (do args <- getOpt Permute options <$> getArgs
                                           case opts of
                                             Options { optRunWorker = True } -> runWorker coord
                                             Options { optWidth = w, optHeight = h, optSamples = samples, optOutput = output } | _:_ <- workers ->
-                                              submitWork coord workers (makeWork w h samples)
+                                              submitWork coord workers (makeWork w h samples spheres)
                                                 >>= makeImage w h
                                                 >>= savePngFile output
                                             _ -> usage ["Need at least one worker"]

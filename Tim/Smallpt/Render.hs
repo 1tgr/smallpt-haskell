@@ -1,6 +1,8 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE DeriveDataTypeable, PatternGuards #-}
 module Tim.Smallpt.Render(
   Context(..),
+  Refl(..),
+  Sphere(..),
   Vec(..),
   Work(..),
   (|*|), 
@@ -16,12 +18,14 @@ module Tim.Smallpt.Render(
 
 import Control.Applicative
 import Control.Monad.State
+import Data.Data
 import Data.Ord
 import Data.List
+import Data.Typeable
 import Random
 
 data Vec a = Vec a a a
-             deriving (Read, Show)
+             deriving (Data, Typeable)
 
 instance Functor Vec where
   fmap f (Vec x y z) = Vec (f x) (f y) (f z)
@@ -56,12 +60,14 @@ data Ray a = Ray (Vec a) (Vec a)
 data Refl = DIFF
           | SPEC
           | REFR
+          deriving (Data, Typeable)
 
 data Sphere a = Sphere { radius :: a,
                          position :: Vec a,
                          emission :: Vec a,
                          colour :: Vec a,
                          refl :: Refl }
+                deriving (Data, Typeable)
 
 intersectSphere :: (Floating a, Ord a) => Ray a -> Sphere a -> Maybe a
 intersectSphere (Ray o d) s | det < 0 = Nothing
@@ -76,80 +82,69 @@ intersectSphere (Ray o d) s | det < 0 = Nothing
                                   t = b - det'
                                   t' = b + det'
 
-spheres :: Fractional a => [Sphere a]
-spheres = [Sphere { radius = 1e5,  position = Vec (1+1e5) 40.8 81.6,    emission = Vec 0 0 0,    colour = Vec 0.75 0.25 0.25,  refl = DIFF},--Left
-           Sphere { radius = 1e5,  position = Vec (99-1e5) 40.8 81.6,   emission = Vec 0 0 0,    colour = Vec 0.25 0.25 0.75,  refl = DIFF},--Rght
-           Sphere { radius = 1e5,  position = Vec 50 40.8 1e5,          emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Back
-           Sphere { radius = 1e5,  position = Vec 50 40.8 (170-1e5),    emission = Vec 0 0 0,    colour = Vec 0 0 0,           refl = DIFF},--Frnt
-           Sphere { radius = 1e5,  position = Vec 50 1e5 81.6,          emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Botm
-           Sphere { radius = 1e5,  position = Vec 50 (81.6-1e5) 81.6,   emission = Vec 0 0 0,    colour = Vec 0.75 0.75 0.75,  refl = DIFF},--Top
-           Sphere { radius = 16.5, position = Vec 27 16.5 47,           emission = Vec 0 0 0,    colour = Vec 1 1 1 |*| 0.999, refl = SPEC},--Mirr
-           Sphere { radius = 16.5, position = Vec 73 16.5 78,           emission = Vec 0 0 0,    colour = Vec 1 1 1 |*| 0.999, refl = REFR},--Glas
-           Sphere { radius = 600,  position = Vec 50 (681.6-0.27) 81.6, emission = Vec 12 12 12, colour = Vec 0 0 0,           refl = DIFF}] --Lite
-
 maybeMinimumBy :: (a -> a -> Ordering) -> [a] -> Maybe a
 maybeMinimumBy _ [] = Nothing
 maybeMinimumBy f l = Just (minimumBy f l)
 
-intersectScene :: (Floating a, Ord a) => Ray a -> Maybe (Sphere a, a)
-intersectScene r = maybeMinimumBy (comparing snd) [(s, t) | (s, Just t) <- map ((,) <*> intersectSphere r) spheres]
+intersectScene :: (Floating a, Ord a) => [Sphere a] -> Ray a -> Maybe (Sphere a, a)
+intersectScene scene r = maybeMinimumBy (comparing snd) [(s, t) | (s, Just t) <- map ((,) <*> intersectSphere r) scene]
 
-radiance' :: (Floating a, Ord a, Random a, RandomGen g) => Ray a -> Int -> Sphere a -> a -> State g (Vec a)
-radiance' r depth obj t | depth >= 5 = return (emission obj) --R.R.
-                        | otherwise = do p' <- State (randomR (0, 1))
-                                         if p' >= p
-                                           then return (emission obj) --R.R.
-                                           else let f = colour obj |*| (1.0 / p) in ((emission obj) |+|) . (f `vmult`) <$> reflect (refl obj)
-                        where Ray raypos raydir = r
-                              x = raypos |+| (raydir |*| t)
-                              n = norm (x |-| position obj)
-                              nl | (n `dot` raydir) < 0 = n
-                                 | otherwise = n |*| (-1)
-                              p = let Vec fx fy fz = colour obj in maximum [fx, fy, fz]
-                              reflRay = Ray x (raydir |-| (n |*| (2 * (n `dot` raydir))))
-                              reflect DIFF = let w = nl                                -- Ideal DIFFUSE reflection
-                                                 Vec wx _ _ = w
-                                                 u | abs wx > 0.1 = norm (Vec 0 1 0 `cross` w)
-                                                   | otherwise = norm (Vec 1 0 0 `cross` w)
-                                                 v = w `cross` u
-                                             in do r1 <- State (randomR (0, 2 * pi))
-                                                   r2 <- State (randomR (0, 1))
-                                                   let r2s = sqrt r2
-                                                       d = norm ((u |*| (cos r1 * r2s)) |+| 
-                                                                 (v |*| (sin r1 * r2s)) |+| 
-                                                                 (w |*| sqrt (1 - r2)))
-                                                   radiance (Ray x d) (depth + 1)
-                              reflect SPEC = radiance reflRay (depth + 1)             -- Ideal SPECULAR reflection
-                              reflect REFR | cos2t < 0 = radiance reflRay (depth + 1) -- Total internal reflection
-                                           | depth >= 2 = do pp' <- State (randomR (0, 1))
-                                                             if pp' < pp
-                                                               then (|*| rp) <$> radiance reflRay (depth + 1)
-                                                               else (|*| tp) <$> radiance (Ray x tdir) (depth + 1)
-                                           | otherwise = do re' <- (|*| re) <$> radiance reflRay (depth + 1)
-                                                            tr' <- (|*| tr) <$> radiance (Ray x tdir) (depth + 1)
-                                                            return (re' |+| tr')    -- Ideal dielectric REFRACTION
-                                           where into = (n `dot` nl) > 0             -- Ray from outside going in?
-                                                 nc = 1
-                                                 nt = 1.5
-                                                 nnt | into = nc / nt
-                                                     | otherwise = nt / nc
-                                                 ddn = raydir `dot` nl
-                                                 cos2t = 1 - (nnt * nnt * (1 - (ddn * ddn)))
-                                                 tdir = norm ((raydir |*| nnt) |-| (n |*| ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
-                                                 a = nt - nc
-                                                 b = nt + nc
-                                                 r0 = a * a / (b * b)
-                                                 c | into = 1 + ddn
-                                                   | otherwise = 1 - tdir `dot` n
-                                                 re = r0 + ((1 - r0) * c * c * c * c * c)
-                                                 tr = 1 - re
-                                                 pp = 0.25 + (0.5 * re)
-                                                 rp = re / p
-                                                 tp = tr / (1 - pp)
+radiance' :: (Floating a, Ord a, Random a, RandomGen g) => [Sphere a] -> Ray a -> Int -> Sphere a -> a -> State g (Vec a)
+radiance' scene r depth obj t | depth >= 5 = return (emission obj) --R.R.
+                              | otherwise = do p' <- State (randomR (0, 1))
+                                               if p' >= p
+                                                 then return (emission obj) --R.R.
+                                                 else let f = colour obj |*| (1.0 / p) in ((emission obj) |+|) . (f `vmult`) <$> reflect (refl obj)
+                              where Ray raypos raydir = r
+                                    x = raypos |+| (raydir |*| t)
+                                    n = norm (x |-| position obj)
+                                    nl | (n `dot` raydir) < 0 = n
+                                       | otherwise = n |*| (-1)
+                                    p = let Vec fx fy fz = colour obj in maximum [fx, fy, fz]
+                                    reflRay = Ray x (raydir |-| (n |*| (2 * (n `dot` raydir))))
+                                    reflect DIFF = let w = nl                                -- Ideal DIFFUSE reflection
+                                                       Vec wx _ _ = w
+                                                       u | abs wx > 0.1 = norm (Vec 0 1 0 `cross` w)
+                                                         | otherwise = norm (Vec 1 0 0 `cross` w)
+                                                       v = w `cross` u
+                                                   in do r1 <- State (randomR (0, 2 * pi))
+                                                         r2 <- State (randomR (0, 1))
+                                                         let r2s = sqrt r2
+                                                             d = norm ((u |*| (cos r1 * r2s)) |+| 
+                                                                       (v |*| (sin r1 * r2s)) |+| 
+                                                                       (w |*| sqrt (1 - r2)))
+                                                         radiance scene (Ray x d) (depth + 1)
+                                    reflect SPEC = radiance scene reflRay (depth + 1)             -- Ideal SPECULAR reflection
+                                    reflect REFR | cos2t < 0 = radiance scene reflRay (depth + 1) -- Total internal reflection
+                                                 | depth >= 2 = do pp' <- State (randomR (0, 1))
+                                                                   if pp' < pp
+                                                                     then (|*| rp) <$> radiance scene reflRay (depth + 1)
+                                                                     else (|*| tp) <$> radiance scene (Ray x tdir) (depth + 1)
+                                                 | otherwise = do re' <- (|*| re) <$> radiance scene reflRay (depth + 1)
+                                                                  tr' <- (|*| tr) <$> radiance scene (Ray x tdir) (depth + 1)
+                                                                  return (re' |+| tr')    -- Ideal dielectric REFRACTION
+                                                 where into = (n `dot` nl) > 0             -- Ray from outside going in?
+                                                       nc = 1
+                                                       nt = 1.5
+                                                       nnt | into = nc / nt
+                                                           | otherwise = nt / nc
+                                                       ddn = raydir `dot` nl
+                                                       cos2t = 1 - (nnt * nnt * (1 - (ddn * ddn)))
+                                                       tdir = norm ((raydir |*| nnt) |-| (n |*| ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
+                                                       a = nt - nc
+                                                       b = nt + nc
+                                                       r0 = a * a / (b * b)
+                                                       c | into = 1 + ddn
+                                                         | otherwise = 1 - tdir `dot` n
+                                                       re = r0 + ((1 - r0) * c * c * c * c * c)
+                                                       tr = 1 - re
+                                                       pp = 0.25 + (0.5 * re)
+                                                       rp = re / p
+                                                       tp = tr / (1 - pp)
 
-radiance :: (Floating a, Ord a, Random a, RandomGen g) => Ray a -> Int -> State g (Vec a)
-radiance r depth | Just (obj, t) <- intersectScene r = radiance' r depth obj t
-                 | otherwise = return (Vec 0 0 0)
+radiance :: (Floating a, Ord a, Random a, RandomGen g) => [Sphere a] -> Ray a -> Int -> State g (Vec a)
+radiance scene r depth | Just (obj, t) <- intersectScene scene r = radiance' scene r depth obj t
+                       | otherwise = return (Vec 0 0 0)
 
 data Context a = Context { ctxw :: Int,
                            ctxh :: Int,
@@ -157,8 +152,9 @@ data Context a = Context { ctxw :: Int,
                            ctxcx :: Vec a,
                            ctxcy :: Vec a,
                            ctxcamdir :: Vec a,
-                           ctxcampos :: Vec a }
-                 deriving (Read, Show)
+                           ctxcampos :: Vec a,
+                           ctxscene :: [Sphere a] }
+                 deriving (Data, Typeable)
 
 clamp :: (Num a, Ord a) => a -> a
 clamp x | x < 0 = 0
@@ -167,26 +163,26 @@ clamp x | x < 0 = 0
 
 line :: (Floating a, Ord a, Random a) => Context a -> Int -> [Vec a]
 line context y = evalState (mapM (pixel . subtract 1) [1..w]) (mkStdGen (y * y * y))
-                 where Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcamdir = camdir, ctxcampos = campos } = context
+                 where Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcamdir = camdir, ctxcampos = campos, ctxscene = scene } = context
                        pixel x = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
                        subpixel x sx sy = fmap clamp . (|*| (1 / fromIntegral samp)) . foldl1 (|+|) <$> replicateM samp (sample x sx sy)
-                       sample x sx sy = do r1 <- State (randomR (0, 2))
-                                           r2 <- State (randomR (0, 2))
-                                           let dx | r1 < 1 = sqrt r1 - 1
-                                                  | otherwise = 1 - sqrt (2 - r1)
-                                               dy | r2 < 1 = sqrt r2 - 1
-                                                  | otherwise = 1 - sqrt (2 - r2)
+                       sample x sx sy = do r1 <- State (randomR (0, 4))
+                                           r2 <- State (randomR (0, 4))
+                                           let dx | r1 < 2 = sqrt r1 - 2
+                                                  | otherwise = 2 - sqrt (4 - r1)
+                                               dy | r2 < 2 = sqrt r2 - 2
+                                                  | otherwise = 2 - sqrt (4 - r2)
                                                d = (cx |*| ((((fromIntegral sx + 0.5 + dx) / 2 + fromIntegral x) / fromIntegral w) - 0.5)) |+|
                                                    (cy |*| ((((fromIntegral sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h) - 0.5)) |+| camdir
                                                ray = Ray (campos |+| (d |*| 140.0)) (norm d)
-                                           radiance ray 0
+                                           radiance scene ray 0
 
 data Work a = RenderLine a Int
-              deriving (Read, Show)
+              deriving (Data, Typeable)
 
-makeWork :: Floating a => Int -> Int -> Int -> [Work (Context a)]
-makeWork w h samp = map (RenderLine context . (h -)) [1..h]
-                    where context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
-                          camdir = norm (Vec 0 (-0.042612) (-1))
-                          cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
-                          cy = norm (cx `cross` camdir) |*| 0.5135
+makeWork :: Floating a => Int -> Int -> Int -> [Sphere a] -> [Work (Context a)]
+makeWork w h samp scene = map (RenderLine context . (h -)) [1..h]
+                          where context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir, ctxscene = scene }
+                                camdir = norm (Vec 0 (-0.042612) (-1))
+                                cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
+                                cy = norm (cx `cross` camdir) |*| 0.5135

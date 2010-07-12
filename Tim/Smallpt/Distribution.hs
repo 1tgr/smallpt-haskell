@@ -8,9 +8,10 @@ import Data.List
 import System
 import System.IO
 import System.Process
+import Text.JSON.Generic
 import Tim.Smallpt.Chart
 
-invoke :: (Show a, Read b) => String -> [(Int, a)] -> IO [(Int, b)]
+invoke :: (Data a, Data b) => String -> [(Int, a)] -> IO [(Int, b)]
 invoke worker task = do (Just inh, Just outh, Just errh, pid) <- createProcess (shell worker){ std_in  = CreatePipe,
                                                                                                std_out = CreatePipe,
                                                                                                std_err = CreatePipe }
@@ -23,7 +24,10 @@ invoke worker task = do (Just inh, Just outh, Just errh, pid) <- createProcess (
                         err <- hGetContents errh
                         _ <- forkIO $ evaluate (length err) >> putMVar outMVar ()
 
-                        hPrint inh (map snd task)
+                        let inp = encodeJSON (map snd task)
+                        putStrLn inp
+
+                        hPutStr inh inp
                         hFlush inh
                         hClose inh
 
@@ -36,7 +40,7 @@ invoke worker task = do (Just inh, Just outh, Just errh, pid) <- createProcess (
                         hFlush stdout
                         case exitCode of
                           ExitSuccess -> do putStr err
-                                            return (zip (map fst task) (read out))
+                                            return (zip (map fst task) (decodeJSON out))
                           ExitFailure _ -> fail err
 
 makeTasks :: Int -> [a] -> [[a]]
@@ -53,7 +57,7 @@ process queueMVar m = loop
                                                    loop
                                         [] -> return ()
 
-submitWork' :: (Show a, Read b) => [String] -> [a] -> IO [b]
+submitWork' :: (Data a, Data b) => [String] -> [a] -> IO [b]
 submitWork' workers work = do chart <- makeChart
                               let tasks = makeTasks 10 (zip [1..] work)
                               tasksMVar <- newMVar tasks
@@ -70,9 +74,9 @@ submitWork' workers work = do chart <- makeChart
                                     $ sortBy (comparing fst)
                                       [result | Right results' <- results, result <- results']
 
-data (Show a, Read b) => Coordinator a b = Coordinator { submitWork :: [String] -> [a] -> IO [b],
+data (Data a, Data b) => Coordinator a b = Coordinator { submitWork :: [String] -> [a] -> IO [b],
                                                          runWorker :: IO () }
 
-coordinator :: (Read a, Show a, Read b, Show b) => (a -> b) -> Coordinator a b
+coordinator :: (Data a, Data b) => (a -> b) -> Coordinator a b
 coordinator worker = Coordinator { submitWork = submitWork',
-                                   runWorker = interact (show . map worker . read) }
+                                   runWorker = interact (encodeJSON . map worker . decodeJSON) }
