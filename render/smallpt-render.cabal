@@ -1,0 +1,12 @@
+Name:           smallpt-render
+Version:        1.0
+Description:    A ray tracer demo with global illumination
+Author:         Tim Robinson
+Maintainer:     tim.g.robinson@gmail.com
+Build-Type:     Simple
+Cabal-Version:  >=1.2
+
+Executable smallpt-render
+  Main-is:        Main.hs
+  Build-Depends:  base >= 4, bytestring, cgi >= 3000, containers >= 0.1, data-default >= 0.2, hack >= 2009.10.30, hack-contrib >= 2010.2.25, hack-handler-hyena >= 2010.3.15, hack-middleware-jsonp, haskell98 >= 1, json >= 0.4.1, mtl >= 1, smallpt-protocol, utf8-string >= 0.3
+  ghc-options:    -Wall

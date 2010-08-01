@@ -1,0 +1,261 @@
+<html>
+  <head>
+    <title>Test Smallpt</title>
+    <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.4/jquery.min.js"></script>
+    <script type="text/javascript">
+jQuery.JSON = {
+      useHasOwn: ({}.hasOwnProperty ? true: false),
+      pad: function(n) {
+          return n < 10 ? "0" + n: n;
+      },
+      m: {
+          "\b": '\\b',
+          "\t": '\\t',
+          "\n": '\\n',
+          "\f": '\\f',
+          "\r": '\\r',
+          '"': '\\"',
+          "\\": '\\\\'
+      },
+      encodeString: function(s) {
+          if (/["\\\x00-\x1f]/.test(s)) {
+              return '"' + s.replace(/([\x00-\x1f\\"])/g,
+              function(a, b) {
+                  var c = m[b];
+                  if (c) {
+                      return c;
+                  }
+                  c = b.charCodeAt();
+                  return "\\u00" +
+                  Math.floor(c / 16).toString(16) +
+                  (c % 16).toString(16);
+              }) + '"';
+          }
+          return '"' + s + '"';
+      },
+      encodeArray: function(o) {
+          var a = ["["],
+          b,
+          i,
+          l = o.length,
+          v;
+          for (i = 0; i < l; i += 1) {
+              v = o[i];
+              switch (typeof v) {
+              case "undefined":
+              case "function":
+              case "unknown":
+                  break;
+              default:
+                  if (b) {
+                      a.push(',');
+                  }
+                  a.push(v === null ? "null": this.encode(v));
+                  b = true;
+              }
+          }
+          a.push("]");
+          return a.join("");
+      },
+      encodeDate: function(o) {
+          return '"' + o.getFullYear() + "-" +
+          pad(o.getMonth() + 1) + "-" +
+          pad(o.getDate()) + "T" +
+          pad(o.getHours()) + ":" +
+          pad(o.getMinutes()) + ":" +
+          pad(o.getSeconds()) + '"';
+      },
+      encode: function(o) {
+          if (typeof o == "undefined" || o === null) {
+              return "null";
+          } else if (o instanceof Array) {
+              return this.encodeArray(o);
+          } else if (o instanceof Date) {
+              return this.encodeDate(o);
+          } else if (typeof o == "string") {
+              return this.encodeString(o);
+          } else if (typeof o == "number") {
+              return isFinite(o) ? String(o) : "null";
+          } else if (typeof o == "boolean") {
+              return String(o);
+          } else {
+              var self = this;
+
+              var a = ["{"],
+              b,
+              i,
+              v;
+              for (i in o) {
+                  if (!this.useHasOwn || o.hasOwnProperty(i)) {
+                      v = o[i];
+                      switch (typeof v) {
+                      case "undefined":
+                      case "function":
+                      case "unknown":
+                          break;
+                      default:
+                          if (b) {
+                              a.push(',');
+                          }
+                          a.push(self.encode(i), ":",
+                          v === null ? "null": self.encode(v));
+                          b = true;
+                      }
+                  }
+              }
+              a.push("}");
+              return a.join("");
+          }
+      },
+      decode: function(json) {
+          return eval("(" + json + ')');
+      }
+  };
+
+function print(s) {
+  var response = $("#response").val();
+  $("#response").val(response == "" 
+    ? s 
+    : response + "\n" + s);
+}
+
+function submitError(event, request, settings) {
+  print(request.responseText);
+}
+
+function evalComplete(rowOffset) {
+  return function(data) {
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+    var imageData = ctx.createImageData(640, 1);
+    var width = imageData.width;
+    var image = imageData.data;
+    for (rowIndex in data.result)
+    {
+      var row = data.result[rowIndex];
+
+      for (i = 0; i < width; i++)
+      {
+        var pixel = row[i];
+        image[i * 4 + 0] = pixel[0];
+        image[i * 4 + 1] = pixel[1];
+        image[i * 4 + 2] = pixel[2];
+        image[i * 4 + 3] = 255;
+      }
+
+      ctx.putImageData(imageData, 0, rowOffset + parseInt(rowIndex));
+    }
+  }
+}
+
+function submitComplete(input) {
+  return function(data) {
+    print("Got " + data.work[0].task.length + " tasks")
+
+    var workItem = data.work[0];
+    for (rowOffset in workItem.task) {
+      var postData = {
+        input: input,
+        context: $.JSON.encode(workItem.context),
+        task: $.JSON.encode([workItem.task[rowOffset]])
+      };
+
+      $.post("/work/eval", postData, evalComplete(parseInt(rowOffset)), "json");
+    }
+  };
+}
+
+function submit() {
+  $("#response").text("");
+  var scene = $.parseJSON($("#scene").val());
+  var input = $.JSON.encode({ scene: scene, width: 640, height: 480, samples: 256 });
+  var postData = { input: input };
+  $.post("/work/index", postData, submitComplete(input), "json");
+}
+
+var scene =
+  [{
+      "radius": 100000,
+      "position": [100001, 40.8, 81.6],
+      "emission": [0, 0, 0],
+      "colour": [0.75, 0.25, 0.25],
+      "refl": "DIFF"
+  },
+  {
+      "radius": 100000,
+      "position": [ - 99901, 40.8, 81.6],
+      "emission": [0, 0, 0],
+      "colour": [0.25, 0.25, 0.75],
+      "refl": "DIFF"
+  },
+  {
+      "radius": 100000,
+      "position": [50, 40.8, 100000],
+      "emission": [0, 0, 0],
+      "colour": [0.75, 0.75, 0.75],
+      "refl": "DIFF"
+  },
+  {
+      "radius": 100000,
+      "position": [50, 40.8, -99830],
+      "emission": [0, 0, 0],
+      "colour": [0, 0, 0],
+      "refl": "DIFF"
+  },
+  {
+      "radius": 100000,
+      "position": [50, 100000, 81.6],
+      "emission": [0, 0, 0],
+      "colour": [0.75, 0.75, 0.75],
+      "refl": "DIFF"
+  },
+  {
+      "radius": 100000,
+      "position": [50, -99918.4, 81.6],
+      "emission": [0, 0, 0],
+      "colour": [0.75, 0.75, 0.75],
+      "refl": "DIFF"
+  },
+  {
+      "radius": 16.5,
+      "position": [27, 16.5, 47],
+      "emission": [0, 0, 0],
+      "colour": [0.999, 0.999, 0.999],
+      "refl": "SPEC"
+  },
+  {
+      "radius": 16.5,
+      "position": [73, 16.5, 78],
+      "emission": [0, 0, 0],
+      "colour": [0.999, 0.999, 0.999],
+      "refl": "REFR"
+  },
+  {
+      "radius": 600,
+      "position": [50, 681.33, 81.6],
+      "emission": [12, 12, 12],
+      "colour": [0, 0, 0],
+      "refl": "DIFF"
+  }];
+
+$(function() {
+  $("#submit").click(submit)
+              .ajaxError(submitError);
+              
+  $("#scene").val($.JSON.encode(scene));
+})
+    </script>
+  </head>
+  <body>
+    <form id="request">
+      <textarea id="scene" rows="10" cols="80"></textarea>
+      <div>
+        <input id="submit" type="button" value="Submit">
+      </div>
+    </form>
+    <form>
+      <textarea id="response" rows="10" cols="80"></textarea>
+      <canvas id="canvas" width="640" height="480"></canvas>
+    </form>
+  </body>
+</html>

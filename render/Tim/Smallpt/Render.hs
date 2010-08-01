@@ -1,20 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable, PatternGuards #-}
 module Tim.Smallpt.Render(
   Context(..),
-  Refl(..),
-  Sphere(..),
-  Vec(..),
-  Work(..),
-  (|*|), 
-  (|+|), 
-  (|-|),
   clamp, 
-  cross,
-  dot, 
   line,
-  makeWork,
-  norm, 
-  vmult) where
+  makeWork) where
 
 import Control.Applicative
 import Control.Monad.State
@@ -23,51 +12,9 @@ import Data.Ord
 import Data.List
 import Data.Typeable
 import Random
+import Tim.Smallpt.Protocol.Render
 
-data Vec a = Vec a a a
-             deriving (Data, Typeable)
-
-instance Functor Vec where
-  fmap f (Vec x y z) = Vec (f x) (f y) (f z)
-
-(|+|) :: Num a => Vec a -> Vec a -> Vec a
-(Vec x1 y1 z1) |+| (Vec x2 y2 z2) = Vec (x1 + x2) (y1 + y2) (z1 + z2)
-
-(|-|) :: Num a => Vec a -> Vec a -> Vec a
-(Vec x1 y1 z1) |-| (Vec x2 y2 z2) = Vec (x1 - x2) (y1 - y2) (z1 - z2)
-
-(|*|) :: Num a => Vec a -> a -> Vec a
-v |*| n = fmap (* n) v
-
-vmult :: Num a => Vec a -> Vec a -> Vec a
-(Vec x1 y1 z1) `vmult` (Vec x2 y2 z2) = Vec (x1 * x2) (y1 * y2) (z1 * z2)
-
-norm :: Floating a => Vec a -> Vec a
-norm v = let Vec x y z = v in v |*| (1 / sqrt ((x * x) + (y * y) + (z * z)))
-
-dot :: Num a => Vec a -> Vec a -> a
-(Vec x1 y1 z1) `dot` (Vec x2 y2 z2) = (x1 * x2) + (y1 * y2) + (z1 * z2)
-
-cross :: Num a => Vec a -> Vec a -> Vec a
-(Vec x1 y1 z1) `cross` (Vec x2 y2 z2) = Vec (y1 * z2 - z1 * y2) (z1 * x2 - x1 * z2) (x1 * y2 - y1 * x2)
-
-infixl 6 |+|
-infixl 6 |-|
-infixl 7 |*|
-  
 data Ray a = Ray (Vec a) (Vec a)
-
-data Refl = DIFF
-          | SPEC
-          | REFR
-          deriving (Data, Typeable)
-
-data Sphere a = Sphere { radius :: a,
-                         position :: Vec a,
-                         emission :: Vec a,
-                         colour :: Vec a,
-                         refl :: Refl }
-                deriving (Data, Typeable)
 
 intersectSphere :: (Floating a, Ord a) => Ray a -> Sphere a -> Maybe a
 intersectSphere (Ray o d) s | det < 0 = Nothing
@@ -146,14 +93,10 @@ radiance :: (Floating a, Ord a, Random a, RandomGen g) => [Sphere a] -> Ray a ->
 radiance scene r depth | Just (obj, t) <- intersectScene scene r = radiance' scene r depth obj t
                        | otherwise = return (Vec 0 0 0)
 
-data Context a = Context { ctxw :: Int,
-                           ctxh :: Int,
-                           ctxsamp :: Int,
-                           ctxcx :: Vec a,
+data Context a = Context { ctxcx :: Vec a,
                            ctxcy :: Vec a,
                            ctxcamdir :: Vec a,
-                           ctxcampos :: Vec a,
-                           ctxscene :: [Sphere a] }
+                           ctxcampos :: Vec a }
                  deriving (Data, Typeable)
 
 clamp :: (Num a, Ord a) => a -> a
@@ -161,28 +104,26 @@ clamp x | x < 0 = 0
         | x > 1 = 1
         | otherwise = x
 
-line :: (Floating a, Ord a, Random a) => Context a -> Int -> [Vec a]
-line context y = evalState (mapM (pixel . subtract 1) [1..w]) (mkStdGen (y * y * y))
-                 where Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcamdir = camdir, ctxcampos = campos, ctxscene = scene } = context
-                       pixel x = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
-                       subpixel x sx sy = fmap clamp . (|*| (1 / fromIntegral samp)) . foldl1 (|+|) <$> replicateM samp (sample x sx sy)
-                       sample x sx sy = do r1 <- State (randomR (0, 4))
-                                           r2 <- State (randomR (0, 4))
-                                           let dx | r1 < 2 = sqrt r1 - 2
-                                                  | otherwise = 2 - sqrt (4 - r1)
-                                               dy | r2 < 2 = sqrt r2 - 2
-                                                  | otherwise = 2 - sqrt (4 - r2)
-                                               d = (cx |*| ((((fromIntegral sx + 0.5 + dx) / 2 + fromIntegral x) / fromIntegral w) - 0.5)) |+|
-                                                   (cy |*| ((((fromIntegral sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h) - 0.5)) |+| camdir
-                                               ray = Ray (campos |+| (d |*| 140.0)) (norm d)
-                                           radiance scene ray 0
+line :: (Floating a, Ord a, Random a) => Inputs a -> Context a -> Int -> [Vec a]
+line inputs context y = evalState (mapM (pixel . subtract 1) [1..w]) (mkStdGen (y * y * y))
+                        where Inputs { width = w, height = h, samples = samp, scene = scene } = inputs
+                              Context { ctxcx = cx, ctxcy = cy, ctxcamdir = camdir, ctxcampos = campos } = context
+                              pixel x = (|*| 0.25) . foldl1 (|+|) <$> sequence [subpixel x sx sy | sy <- [0 :: Int, 1], sx <- [0 :: Int, 1]]
+                              subpixel x sx sy = fmap clamp . (|*| (1 / fromIntegral samp)) . foldl1 (|+|) <$> replicateM samp (sample x sx sy)
+                              sample x sx sy = do r1 <- State (randomR (0, 4))
+                                                  r2 <- State (randomR (0, 4))
+                                                  let dx | r1 < 2 = sqrt r1 - 2
+                                                         | otherwise = 2 - sqrt (4 - r1)
+                                                      dy | r2 < 2 = sqrt r2 - 2
+                                                         | otherwise = 2 - sqrt (4 - r2)
+                                                      d = (cx |*| ((((fromIntegral sx + 0.5 + dx) / 2 + fromIntegral x) / fromIntegral w) - 0.5)) |+|
+                                                          (cy |*| ((((fromIntegral sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h) - 0.5)) |+| camdir
+                                                      ray = Ray (campos |+| (d |*| 140.0)) (norm d)
+                                                  radiance scene ray 0
 
-data Work a = RenderLine a Int
-              deriving (Data, Typeable)
-
-makeWork :: Floating a => Int -> Int -> Int -> [Sphere a] -> [Work (Context a)]
-makeWork w h samp scene = map (RenderLine context . (h -)) [1..h]
-                          where context = Context { ctxw = w, ctxh = h, ctxsamp = samp, ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir, ctxscene = scene }
-                                camdir = norm (Vec 0 (-0.042612) (-1))
-                                cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
-                                cy = norm (cx `cross` camdir) |*| 0.5135
+makeWork :: Floating a => Int -> Int -> Int -> [Sphere a] -> [(Context a, [Int])]
+makeWork w h samp _ = [(context, map (h -) [1..h])]
+                      where context = Context { ctxcx = cx, ctxcy = cy, ctxcampos = Vec 50 52 295.6, ctxcamdir = camdir }
+                            camdir = norm (Vec 0 (-0.042612) (-1))
+                            cx = Vec (0.5135 * fromIntegral w / fromIntegral h) 0 0
+                            cy = norm (cx `cross` camdir) |*| 0.5135

@@ -7,7 +7,7 @@ function makeWorkers {
 }
 
 twidge update "`date +%T` Render is starting"
-if makeWorkers | xargs $smallpt --samples 8000
+if makeWorkers | xargs $smallpt --samples 128
 then
   s3put --public partario/public/image.png image.png
   twidge update "`date +%T` Render is finished - http://s3.amazonaws.com/partario/public/image.png"

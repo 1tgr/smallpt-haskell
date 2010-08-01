@@ -1,5 +1,6 @@
 *.tmproj
 bin
 dist
-image.png
+image*.png
 obj
+packages

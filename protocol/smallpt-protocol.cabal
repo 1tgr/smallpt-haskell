@@ -1,0 +1,12 @@
+Name:           smallpt-protocol
+Version:        1.0
+Description:    A ray tracer demo with global illumination
+Author:         Tim Robinson
+Maintainer:     tim.g.robinson@gmail.com
+Build-Type:     Simple
+Cabal-Version:  >=1.2
+
+Library
+  Build-Depends:  base >= 4, containers >= 0.1, json >= 0.4.1
+  ghc-options:    -Wall
+  Exposed-Modules:  Tim.Smallpt.Protocol.EvalWork, Tim.Smallpt.Protocol.Render, Tim.Smallpt.Protocol.MakeWork
